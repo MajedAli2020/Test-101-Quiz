@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex,nofollow">
+<title>لوحة التحكم | HP1</title>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--gold:#d4ae56;--gold-lt:#f7e6bb;--ink:#0a0803;--panel:#171205;--line:rgba(212,174,86,.25);--txt:#f3ecdd;--muted:#a89f8b;--ok:#6fbf73;--bad:#d6606c}
+body{font-family:'Cairo',system-ui,sans-serif;background:var(--ink);color:var(--txt);min-height:100vh;
+  background-image:radial-gradient(40% 30% at 15% 0%,rgba(212,174,86,.12),transparent 70%)}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(10,8,3,.92);backdrop-filter:blur(8px);z-index:10}
+header h1{font-size:19px;color:var(--gold-lt)}
+main{max-width:980px;margin:0 auto;padding:22px 16px 90px}
+.tabs{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+.tab{padding:10px 18px;border-radius:12px;border:1px solid var(--line);background:transparent;color:var(--muted);font:inherit;font-weight:700;cursor:pointer}
+.tab.active{background:linear-gradient(135deg,#f7e6bb,#d4ae56);color:#140f04;border-color:transparent}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+.btn{padding:9px 16px;border-radius:10px;border:0;font:inherit;font-weight:700;cursor:pointer;color:#140f04;background:linear-gradient(135deg,#f7e6bb,#d4ae56)}
+.btn.sec{background:transparent;color:var(--gold-lt);border:1px solid var(--line)}
+.btn.danger{background:transparent;color:#ff8d98;border:1px solid rgba(214,96,108,.5)}
+.btn.sm{padding:5px 10px;font-size:13px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+input[type=text],input[type=number],input[type=search],textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0f0b04;color:var(--txt);font:inherit;outline:none}
+input:focus,textarea:focus{border-color:var(--gold)}
+textarea{resize:vertical;min-height:54px}
+.row{display:flex;gap:8px;align-items:center;margin-top:8px}
+.row input[type=radio]{accent-color:var(--gold);width:18px;height:18px;flex:none}
+.qhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;color:var(--gold);font-weight:800}
+.qtools{display:flex;gap:6px}
+.savebar{position:fixed;bottom:0;right:0;left:0;padding:12px 18px;background:rgba(10,8,3,.95);border-top:1px solid var(--line);display:flex;gap:12px;align-items:center;justify-content:center;z-index:20}
+.dirty{color:var(--gold-lt);font-size:14px}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.stat{flex:1;min-width:120px;text-align:center;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.stat b{display:block;font-size:24px;color:var(--gold-lt)}
+.stat span{color:var(--muted);font-size:13px}
+.sub-top{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center}
+.badge{display:inline-block;padding:3px 10px;border-radius:99px;font-size:13px;font-weight:700}
+.badge.ok{background:rgba(111,191,115,.15);color:var(--ok)}.badge.bad{background:rgba(214,96,108,.15);color:#ff8d98}
+.meta{color:var(--muted);font-size:13px;margin-top:4px;direction:ltr;text-align:right}
+.det{margin-top:10px;border-top:1px dashed var(--line);padding-top:10px;font-size:14px}
+.det div{margin-bottom:8px}.det .ok{color:var(--ok)}.det .bad{color:#ff8d98}
+label.f{display:block;color:var(--gold);font-weight:700;margin:14px 0 6px}
+.hint{color:var(--muted);font-size:13px;margin-top:4px}
+#toast{position:fixed;top:78px;left:50%;transform:translateX(-50%);background:#1d1707;border:1px solid var(--gold);color:var(--gold-lt);padding:10px 20px;border-radius:12px;opacity:0;pointer-events:none;transition:.25s;z-index:50}
+#toast.show{opacity:1}#toast.err{border-color:var(--bad);color:#ff8d98}
+.empty{text-align:center;color:var(--muted);padding:30px}
+</style>
+</head>
+<body>
+<header>
+  <h1>⚙️ لوحة تحكم HP1 Police Mod</h1>
+  <div style="display:flex;gap:8px"><a class="btn sec sm" href="/" target="_blank" style="text-decoration:none">عرض الموقع</a><button class="btn sec sm" id="logout">تسجيل خروج</button></div>
+</header>
+<main>
+  <div class="tabs">
+    <button class="tab active" data-t="questions">الأسئلة</button>
+    <button class="tab" data-t="settings">الإعدادات</button>
+    <button class="tab" data-t="subs">نتائج المتقدمين</button>
+  </div>
+  <section id="questions"></section>
+  <section id="settings" hidden></section>
+  <section id="subs" hidden></section>
+</main>
+<div class="savebar" id="savebar" hidden>
+  <span class="dirty">⚠️ لديك تغييرات غير محفوظة</span>
+  <button class="btn" id="saveQ">حفظ الأسئلة</button>
+  <button class="btn sec" id="discardQ">تراجع</button>
+</div>
+<div id="toast"></div>
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k in el) el[k] = v;
+    else el.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c != null) el.append(c.nodeType ? c : document.createTextNode(c));
+  return el;
+}
+async function api(path, method = 'GET', body) {
+  const r = await fetch('/admin/api/' + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'hp1-admin' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  if (r.status === 401) { location.reload(); throw new Error('انتهت الجلسة'); }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'حدث خطأ');
+  return d;
+}
+let tt;
+function toast(msg, err) {
+  const t = $('#toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(tt); tt = setTimeout(() => t.className = '', 2600);
+}
+const fmtDate = (ms) => new Date(ms).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' });
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === b));
+  ['questions', 'settings', 'subs'].forEach(id => $('#' + id).hidden = id !== b.dataset.t);
+  $('#savebar').hidden = !(b.dataset.t === 'questions' && dirty);
+  if (b.dataset.t === 'subs') loadSubs();
+}));
+$('#logout').addEventListener('click', async () => { try { await api('logout', 'POST'); } finally { location.href = '/admin'; } });
+
+/* ---------- questions ---------- */
+let Q = [], saved = '', dirty = false;
+function markDirty() {
+  dirty = JSON.stringify(Q) !== saved;
+  $('#savebar').hidden = !dirty;
+}
+function renderQ() {
+  const box = $('#questions'); box.replaceChildren();
+  box.append(h('div', { class: 'row', style: 'justify-content:space-between;margin:0 0 14px' },
+    h('div', { class: 'hint' }, `عدد الأسئلة: ${Q.length} — اختر الدائرة بجانب الإجابة الصحيحة.`),
+    h('button', { class: 'btn', onclick: () => { Q.push({ question: '', options: ['', '', ''], correct: 0 }); renderQ(); markDirty(); window.scrollTo(0, document.body.scrollHeight); } }, '＋ سؤال جديد')));
+  Q.forEach((q, i) => {
+    const card = h('div', { class: 'card' });
+    card.append(h('div', { class: 'qhead' }, h('span', {}, `سؤال ${i + 1}`),
+      h('div', { class: 'qtools' },
+        h('button', { class: 'btn sec sm', disabled: i === 0, onclick: () => { [Q[i - 1], Q[i]] = [Q[i], Q[i - 1]]; renderQ(); markDirty(); } }, '↑'),
+        h('button', { class: 'btn sec sm', disabled: i === Q.length - 1, onclick: () => { [Q[i + 1], Q[i]] = [Q[i], Q[i + 1]]; renderQ(); markDirty(); } }, '↓'),
+        h('button', { class: 'btn danger sm', onclick: () => { if (confirm('حذف هذا السؤال؟')) { Q.splice(i, 1); renderQ(); markDirty(); } } }, 'حذف'))));
+    card.append(h('textarea', { value: q.question, placeholder: 'نص السؤال', oninput: (e) => { q.question = e.target.value; markDirty(); } }));
+    q.options.forEach((o, j) => {
+      card.append(h('div', { class: 'row' },
+        h('input', { type: 'radio', name: 'c' + i, checked: q.correct === j, title: 'الإجابة الصحيحة', onchange: () => { q.correct = j; markDirty(); } }),
+        h('input', { type: 'text', value: o, placeholder: `الخيار ${j + 1}`, oninput: (e) => { q.options[j] = e.target.value; markDirty(); } }),
+        h('button', { class: 'btn danger sm', disabled: q.options.length <= 2, onclick: () => {
+          q.options.splice(j, 1); if (q.correct === j) q.correct = 0; else if (q.correct > j) q.correct--; renderQ(); markDirty();
+        } }, '✕')));
+    });
+    if (q.options.length < 8) card.append(h('div', { class: 'row' }, h('button', { class: 'btn sec sm', onclick: () => { q.options.push(''); renderQ(); markDirty(); } }, '＋ خيار')));
+    box.append(card);
+  });
+}
+async function loadQ() {
+  Q = await api('questions'); saved = JSON.stringify(Q); renderQ(); markDirty();
+}
+$('#saveQ').addEventListener('click', async () => {
+  try { Q = await api('questions', 'PUT', Q); saved = JSON.stringify(Q); renderQ(); markDirty(); toast('✅ تم حفظ الأسئلة'); }
+  catch (e) { toast(e.message, true); }
+});
+$('#discardQ').addEventListener('click', () => { Q = JSON.parse(saved); renderQ(); markDirty(); });
+window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+/* ---------- settings ---------- */
+async function loadSettings() {
+  const c = await api('config'); const box = $('#settings'); box.replaceChildren();
+  const pass = h('input', { type: 'number', min: 1, max: 100, value: c.passPercent });
+  const retry = h('input', { type: 'number', min: 0, max: 10080, value: c.retryMinutes });
+  box.append(h('div', { class: 'card' },
+    h('label', { class: 'f' }, 'نسبة النجاح (%)'), pass, h('div', { class: 'hint' }, 'الحد الأدنى للنسبة المئوية لاجتياز الاختبار.'),
+    h('label', { class: 'f' }, 'مدة الانتظار بعد الرسوب (بالدقائق)'), retry, h('div', { class: 'hint' }, 'اكتب 0 لإلغاء مدة الانتظار. تُطبَّق من السيرفر على أيدي الديسكورد.'),
+    h('div', { style: 'margin-top:18px' }, h('button', { class: 'btn', onclick: async () => {
+      try { await api('config', 'PUT', { passPercent: +pass.value, retryMinutes: +retry.value }); toast('✅ تم حفظ الإعدادات'); }
+      catch (e) { toast(e.message, true); }
+    } }, 'حفظ الإعدادات'))));
+}
+
+/* ---------- submissions ---------- */
+let S = [];
+async function loadSubs() { S = await api('submissions'); renderSubs(); }
+function renderSubs(filter = '') {
+  const box = $('#subs'); box.replaceChildren();
+  const passed = S.filter(s => s.passed).length;
+  box.append(h('div', { class: 'stats' },
+    h('div', { class: 'stat' }, h('b', {}, S.length), h('span', {}, 'إجمالي المحاولات')),
+    h('div', { class: 'stat' }, h('b', { style: 'color:var(--ok)' }, passed), h('span', {}, 'ناجحون')),
+    h('div', { class: 'stat' }, h('b', { style: 'color:#ff8d98' }, S.length - passed), h('span', {}, 'راسبون'))));
+  const search = h('input', { type: 'search', placeholder: '🔍 ابحث بالاسم أو أيدي الديسكورد...', value: filter,
+    oninput: (e) => { renderSubs(e.target.value); const n = $('#subs input[type=search]'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); } });
+  box.append(h('div', { style: 'margin-bottom:14px' }, search));
+  const list = S.filter(s => !filter || s.name.includes(filter) || s.discordId.includes(filter));
+  if (!list.length) box.append(h('div', { class: 'empty' }, 'لا توجد نتائج.'));
+  list.forEach(s => {
+    const det = h('div', { class: 'det', hidden: true },
+      s.details.map((d, i) => h('div', {}, h('b', {}, `${i + 1}) ${d.question}`), h('br'),
+        h('span', { class: d.ok ? 'ok' : 'bad' }, `الإجابة: ${d.chosen ?? 'لم تتم الإجابة'} ${d.ok ? '✅' : '❌'}`),
+        d.ok ? '' : h('span', { class: 'meta', style: 'direction:rtl;display:block' }, `الصحيحة: ${d.correct}`))));
+    box.append(h('div', { class: 'card' },
+      h('div', { class: 'sub-top' },
+        h('div', {}, h('b', {}, s.name), ` — ${s.age} سنة `, h('span', { class: 'badge ' + (s.passed ? 'ok' : 'bad') }, `${s.correctCount}/${s.total} (${s.percent}%) ${s.passed ? 'ناجح' : 'راسب'}`),
+          h('div', { class: 'meta' }, `${s.discordId} · ${fmtDate(s.at)}`)),
+        h('div', { class: 'qtools' },
+          h('button', { class: 'btn sec sm', onclick: () => det.hidden = !det.hidden }, 'التفاصيل'),
+          s.passed ? null : h('button', { class: 'btn sec sm', onclick: async () => {
+            try { const r = await api('cooldown/reset', 'POST', { discordId: s.discordId }); toast(`✅ تم فك الانتظار (${r.cleared})`); loadSubs(); } catch (e) { toast(e.message, true); }
+          } }, 'فك الانتظار'),
+          h('button', { class: 'btn danger sm', onclick: async () => {
+            if (!confirm('حذف هذه النتيجة نهائياً؟')) return;
+            try { await api('submissions/' + s.id, 'DELETE'); loadSubs(); } catch (e) { toast(e.message, true); }
+          } }, 'حذف'))),
+      det));
+  });
+}
+
+loadQ().catch(e => toast(e.message, true));
+loadSettings().catch(e => toast(e.message, true));
+</script>
+</body>
+</html>

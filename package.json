@@ -1,0 +1,16 @@
+{
+  "name": "hp1-police-mod-site",
+  "version": "1.0.0",
+  "private": true,
+  "description": "موقع HP1 Police Mod مع لوحة تحكم (بدون مكتبات خارجية)",
+  "scripts": {
+    "start": "node server.js",
+    "bot": "node bot.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.0"
+  }
+}
