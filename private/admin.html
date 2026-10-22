@@ -26,6 +26,8 @@ main{max-width:980px;margin:0 auto;padding:22px 16px 90px}
 input[type=text],input[type=number],input[type=search],textarea{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0f0b04;color:var(--txt);font:inherit;outline:none}
 input:focus,textarea:focus{border-color:var(--gold)}
 textarea{resize:vertical;min-height:54px}
+select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0f0b04;color:var(--txt);font:inherit;outline:none}
+.qtools select{width:auto;padding:5px 8px;font-size:13px}
 .row{display:flex;gap:8px;align-items:center;margin-top:8px}
 .row input[type=radio]{accent-color:var(--gold);width:18px;height:18px;flex:none}
 .qhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;color:var(--gold);font-weight:800}
@@ -47,6 +49,27 @@ label.f{display:block;color:var(--gold);font-weight:700;margin:14px 0 6px}
 #toast{position:fixed;top:78px;left:50%;transform:translateX(-50%);background:#1d1707;border:1px solid var(--gold);color:var(--gold-lt);padding:10px 20px;border-radius:12px;opacity:0;pointer-events:none;transition:.25s;z-index:50}
 #toast.show{opacity:1}#toast.err{border-color:var(--bad);color:#ff8d98}
 .empty{text-align:center;color:var(--muted);padding:30px}
+.tab.locked{opacity:.55;border-style:dashed}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.chip{padding:7px 14px;border-radius:99px;border:1px solid var(--line);background:transparent;color:var(--muted);font:inherit;font-weight:700;cursor:pointer;font-size:14px}
+.chip.active{background:rgba(212,174,86,.18);color:var(--gold-lt);border-color:var(--gold)}
+.chip.add{border-style:dashed;color:var(--gold)}
+.rrow{display:flex;gap:8px;align-items:flex-start;margin-top:8px}
+.rrow .num{color:var(--gold);font-weight:800;min-width:34px;padding-top:10px;text-align:center;direction:ltr}
+.rrow textarea{min-height:48px}
+.rrow .qtools{flex:none;padding-top:6px}
+.contact-card{display:flex;gap:14px;align-items:flex-start}
+.contact-card .pic{width:72px;height:72px;border-radius:50%;object-fit:cover;background:#0f0b04;border:2px solid var(--gold);flex:none;display:grid;place-items:center;color:var(--gold);font-size:26px;overflow:hidden}
+.contact-card .pic img{width:100%;height:100%;object-fit:cover}
+.contact-card .fields{flex:1;display:grid;gap:8px;min-width:0}
+.perm{border-style:dashed;margin-top:26px}
+.permgrid{margin-top:10px;display:grid;gap:6px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.permgrid label{display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 8px;border-radius:8px;border:1px solid transparent}
+.permgrid label:hover{border-color:var(--line)}
+.permgrid input{accent-color:var(--gold);width:17px;height:17px}
+.lockcard{text-align:center;padding:50px 20px;color:var(--muted)}
+.lockcard b{display:block;font-size:42px;margin-bottom:8px}
+@media(max-width:600px){.contact-card{flex-direction:column;align-items:stretch}.contact-card .pic{align-self:center}}
 </style>
 </head>
 <body>
@@ -55,21 +78,17 @@ label.f{display:block;color:var(--gold);font-weight:700;margin:14px 0 6px}
   <div style="display:flex;gap:8px"><a class="btn sec sm" href="/" target="_blank" style="text-decoration:none">عرض الموقع</a><button class="btn sec sm" id="logout">تسجيل خروج</button></div>
 </header>
 <main>
-  <div class="tabs">
-    <button class="tab active" data-t="questions">الأسئلة</button>
-    <button class="tab" data-t="settings">الإعدادات</button>
-    <button class="tab" data-t="subs">نتائج المتقدمين</button>
-    <button class="tab" data-t="owner" id="ownerTab">🔒 إعدادات خاصة</button>
-  </div>
-  <section id="questions"></section>
-  <section id="settings" hidden></section>
-  <section id="subs" hidden></section>
-  <section id="owner" hidden></section>
+  <div class="tabs" id="tabs"></div>
+  <div class="pane" id="pane-questions"><section id="questions"></section><div class="permslot" data-tab="questions"></div></div>
+  <div class="pane" id="pane-settings" hidden><section id="settings"></section><div class="permslot" data-tab="settings"></div></div>
+  <div class="pane" id="pane-subs" hidden><section id="subs"></section><div class="permslot" data-tab="subs"></div></div>
+  <div class="pane" id="pane-site" hidden><section id="site"></section><div class="permslot" data-tab="site"></div></div>
+  <div class="pane" id="pane-owner" hidden><section id="owner"></section></div>
 </main>
 <div class="savebar" id="savebar" hidden>
   <span class="dirty">⚠️ لديك تغييرات غير محفوظة</span>
-  <button class="btn" id="saveQ">حفظ الأسئلة</button>
-  <button class="btn sec" id="discardQ">تراجع</button>
+  <button class="btn" id="saveBtn">حفظ</button>
+  <button class="btn sec" id="discardBtn">تراجع</button>
 </div>
 <div id="toast"></div>
 <script>
@@ -103,23 +122,84 @@ function toast(msg, err) {
 }
 const fmtDate = (ms) => new Date(ms).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' });
 
-/* ---------- tabs ---------- */
-let ME = { isOwner: false };
-document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === b));
-  ['questions', 'settings', 'subs', 'owner'].forEach(id => $('#' + id).hidden = id !== b.dataset.t);
-  $('#savebar').hidden = !(b.dataset.t === 'questions' && dirty);
-  if (b.dataset.t === 'subs') loadSubs();
-  if (b.dataset.t === 'owner') loadOwner();
-}));
+/* ---------- tabs / dirty / lock ---------- */
+const TAB_LABELS = { questions: 'الأسئلة', settings: 'الإعدادات', subs: 'نتائج المتقدمين', site: '⚙️ إعدادات الموقع', owner: '🔒 إعدادات خاصة' };
+const TAB_ORDER = ['questions', 'settings', 'subs', 'site', 'owner'];
+let ME = { isOwner: false, tabs: {} }, curTab = 'questions', siteSub = 'rules';
+const access = (t) => t === 'owner' || !ME.tabs || ME.tabs[t] !== false;
+const DIRTY = {}, SAVERS = {};
+const barKey = () => curTab === 'questions' ? 'questions' : curTab === 'site' ? siteSub : null;
+function setDirty(k, v) { DIRTY[k] = v; refreshBar(); }
+function refreshBar() { const k = barKey(); $('#savebar').hidden = !(k && DIRTY[k]); }
+$('#saveBtn').addEventListener('click', () => { const k = barKey(); if (k && SAVERS[k]) SAVERS[k].save(); });
+$('#discardBtn').addEventListener('click', () => { const k = barKey(); if (k && SAVERS[k]) SAVERS[k].discard(); });
+window.addEventListener('beforeunload', (e) => { if (Object.values(DIRTY).some(Boolean)) { e.preventDefault(); e.returnValue = ''; } });
+
+function renderTabs() {
+  const box = $('#tabs'); box.replaceChildren();
+  TAB_ORDER.forEach(t => {
+    const locked = !access(t);
+    let label = TAB_LABELS[t];
+    if (t === 'owner' && ME.isOwner) label = '👑 إعدادات خاصة';
+    box.append(h('button', { class: 'tab' + (t === curTab ? ' active' : '') + (locked ? ' locked' : ''), onclick: () => showTab(t) },
+      (locked ? '🔒 ' : '') + label));
+  });
+}
+function lockPane(t) {
+  $('#' + t).replaceChildren(h('div', { class: 'card lockcard' }, h('b', {}, '🔒'), 'ما عندك صلاحية لهذه الخانة.', h('div', { class: 'hint' }, 'تواصل مع المالك لإعطائك الرول المناسب.')));
+  document.querySelector(`.permslot[data-tab="${t}"]`)?.replaceChildren();
+}
+function showTab(t) {
+  curTab = t; renderTabs();
+  TAB_ORDER.forEach(id => $('#pane-' + id).hidden = id !== t);
+  refreshBar();
+  if (!access(t)) return lockPane(t);
+  if (t === 'subs') loadSubs();
+  if (t === 'owner') loadOwner();
+  if (t === 'site') loadSite();
+  renderPerm(t);
+}
 $('#logout').addEventListener('click', async () => { try { await api('logout', 'POST'); } finally { location.href = '/admin'; } });
 
-/* ---------- questions ---------- */
-let Q = [], saved = '', dirty = false;
-function markDirty() {
-  dirty = JSON.stringify(Q) !== saved;
-  $('#savebar').hidden = !dirty;
+/* ---------- صلاحيات الخانة (تظهر للمالك فقط، تحت كل خانة) ---------- */
+let ROLES = null;
+async function renderPerm(tab) {
+  const slot = document.querySelector(`.permslot[data-tab="${tab}"]`);
+  if (!slot) return;
+  slot.replaceChildren();
+  if (!ME.isOwner) return;
+  let perms;
+  try {
+    if (!ROLES) { const d = await api('owner/roles'); ROLES = d.roles || []; }
+    perms = await api('owner/perms');
+  } catch (e) { return; }
+  const everyone = perms[tab] === null, sel = new Set(perms[tab] || []);
+  const grid = h('div', { class: 'permgrid' });
+  const all = h('input', { type: 'checkbox', checked: everyone });
+  const boxes = [];
+  const sync = () => boxes.forEach(b => b.disabled = all.checked);
+  const known = new Set(ROLES.map(r => r.id));
+  [...ROLES, ...[...sel].filter(id => !known.has(id)).map(id => ({ id, name: 'رول (أيدي ' + id.slice(-4) + ')' }))].forEach(r => {
+    const cb = h('input', { type: 'checkbox', checked: sel.has(r.id), onchange: (e) => e.target.checked ? sel.add(r.id) : sel.delete(r.id) });
+    boxes.push(cb);
+    grid.append(h('label', {}, cb, h('span', { style: 'width:11px;height:11px;border-radius:50%;flex:none;background:' + (r.color || '#99aab5') }), r.name));
+  });
+  all.addEventListener('change', sync); sync();
+  slot.append(h('div', { class: 'card perm' },
+    h('div', { class: 'qhead' }, h('span', {}, '🔑 صلاحيات هذه الخانة'), h('span', { class: 'hint', style: 'margin:0' }, 'تظهر لك أنت (المالك) فقط')),
+    h('div', { class: 'hint' }, 'حدد الرولات اللي تقدر تفتح هذه الخانة. اللي ما معه أي رول منها يطلع له 🔒 على الخانة ولا يقدر يعدل فيها.'),
+    h('label', { style: 'display:flex;gap:8px;align-items:center;margin-top:12px;cursor:pointer;font-weight:700;color:var(--gold-lt)' }, all, 'كل من يدخل لوحة التحكم (بدون تقييد)'),
+    ROLES.length ? grid : h('div', { class: 'hint', style: 'color:#ff8d98' }, 'تعذّر جلب رولات السيرفر.'),
+    h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn', onclick: async () => {
+      if (!all.checked && !sel.size && !confirm('ما اخترت أي رول — الخانة بتكون لك أنت فقط. متأكد؟')) return;
+      try { await api('owner/perms/' + tab, 'PUT', { roleIds: all.checked ? null : [...sel] }); toast('✅ تم حفظ صلاحيات الخانة'); }
+      catch (e) { toast(e.message, true); }
+    } }, 'حفظ الصلاحيات'))));
 }
+
+/* ---------- questions ---------- */
+let Q = [], saved = '';
+function markDirty() { setDirty('questions', JSON.stringify(Q) !== saved); }
 function renderQ() {
   const box = $('#questions'); box.replaceChildren();
   box.append(h('div', { class: 'row', style: 'justify-content:space-between;margin:0 0 14px' },
@@ -145,15 +225,11 @@ function renderQ() {
     box.append(card);
   });
 }
-async function loadQ() {
-  Q = await api('questions'); saved = JSON.stringify(Q); renderQ(); markDirty();
-}
-$('#saveQ').addEventListener('click', async () => {
-  try { Q = await api('questions', 'PUT', Q); saved = JSON.stringify(Q); renderQ(); markDirty(); toast('✅ تم حفظ الأسئلة'); }
-  catch (e) { toast(e.message, true); }
-});
-$('#discardQ').addEventListener('click', () => { Q = JSON.parse(saved); renderQ(); markDirty(); });
-window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+async function loadQ() { Q = await api('questions'); saved = JSON.stringify(Q); renderQ(); markDirty(); }
+SAVERS.questions = {
+  async save() { try { Q = await api('questions', 'PUT', Q); saved = JSON.stringify(Q); renderQ(); markDirty(); toast('✅ تم حفظ الأسئلة'); } catch (e) { toast(e.message, true); } },
+  discard() { Q = JSON.parse(saved); renderQ(); markDirty(); },
+};
 
 /* ---------- settings ---------- */
 async function loadSettings() {
@@ -246,10 +322,225 @@ async function loadOwner() {
   } }, 'حفظ الرولات')));
   box.append(card);
 }
-api('me').then(m => { ME = m; if (m.isOwner) $('#ownerTab').textContent = '👑 إعدادات خاصة'; }).catch(() => {});
 
-loadQ().catch(e => toast(e.message, true));
-loadSettings().catch(e => toast(e.message, true));
+/* ---------- إعدادات الموقع: القوانين + تواصل معنا ---------- */
+let R = [], RS = '', RC = 0, C = [], CS = '', ST = [], STS = '', SC = 0, QI = {}, QIS = '', focusLast = null;
+async function loadSite() {
+  if (DIRTY.rules || DIRTY.contacts || DIRTY.staff || DIRTY.quiz) { renderSite(); return; }
+  try { const d = await api('site'); R = d.rules; RS = JSON.stringify(R); C = d.contacts; CS = JSON.stringify(C); ST = d.staff || []; STS = JSON.stringify(ST);
+    QI = d.quizIntro || { title: '', paragraphs: [], startMessage: '', agreeText: '', durationMinutes: 15 }; QIS = JSON.stringify(QI);
+    if (RC >= R.length) RC = 0; if (SC >= ST.length) SC = 0; renderSite(); }
+  catch (e) { toast(e.message, true); }
+}
+function renderSite() {
+  const box = $('#site'); box.replaceChildren();
+  box.append(h('div', { class: 'chips' },
+    h('button', { class: 'chip' + (siteSub === 'rules' ? ' active' : ''), onclick: () => { siteSub = 'rules'; renderSite(); refreshBar(); } }, '📜 القوانين'),
+    h('button', { class: 'chip' + (siteSub === 'contacts' ? ' active' : ''), onclick: () => { siteSub = 'contacts'; renderSite(); refreshBar(); } }, '📞 تواصل معنا'),
+    h('button', { class: 'chip' + (siteSub === 'quiz' ? ' active' : ''), onclick: () => { siteSub = 'quiz'; renderSite(); refreshBar(); } }, '📝 تعليمات الاختبار'),
+    h('button', { class: 'chip' + (siteSub === 'staff' ? ' active' : ''), onclick: () => { siteSub = 'staff'; renderSite(); refreshBar(); } }, '👑 الطاقم الإداري')));
+  ({ rules: renderRules, contacts: renderContacts, quiz: renderQuiz, staff: renderStaff })[siteSub](box);
+  if (focusLast) { const t = box.querySelectorAll(focusLast); if (t.length) { t[t.length - 1].focus(); t[t.length - 1].scrollIntoView({ block: 'center' }); } focusLast = null; }
+}
+
+/* القوانين */
+const rDirty = () => setDirty('rules', JSON.stringify(R) !== RS);
+function renderRules(box) {
+  box.append(h('div', { class: 'hint', style: 'margin-bottom:10px' }, 'اختر القسم ثم أضف أو احذف أو عدّل القوانين. الترقيم يتم تلقائياً في الموقع.'));
+  box.append(h('div', { class: 'chips' },
+    R.map((c, i) => h('button', { class: 'chip' + (i === RC ? ' active' : ''), onclick: () => { RC = i; renderSite(); } }, c.title || '(بدون اسم)')),
+    h('button', { class: 'chip add', disabled: R.length >= 12, onclick: () => { R.push({ title: 'قسم جديد', intro: [], highlight: '', rules: [''] }); RC = R.length - 1; rDirty(); focusLast = '.rtitle'; renderSite(); } }, '＋ قسم جديد')));
+  const c = R[RC];
+  if (!c) return;
+  box.append(h('div', { class: 'card' },
+    h('div', { class: 'qhead' }, h('span', {}, 'اسم القسم'),
+      h('div', { class: 'qtools' },
+        h('button', { class: 'btn sec sm', disabled: RC === 0, title: 'تقديم', onclick: () => { [R[RC - 1], R[RC]] = [R[RC], R[RC - 1]]; RC--; rDirty(); renderSite(); } }, '→'),
+        h('button', { class: 'btn sec sm', disabled: RC === R.length - 1, title: 'تأخير', onclick: () => { [R[RC + 1], R[RC]] = [R[RC], R[RC + 1]]; RC++; rDirty(); renderSite(); } }, '←'),
+        h('button', { class: 'btn danger sm', disabled: R.length <= 1, onclick: () => { if (confirm(`حذف القسم «${c.title}» بكل قوانينه؟`)) { R.splice(RC, 1); RC = Math.max(0, RC - 1); rDirty(); renderSite(); } } }, 'حذف القسم'))),
+    h('input', { type: 'text', class: 'rtitle', value: c.title, maxLength: 40, oninput: (e) => { c.title = e.target.value; rDirty(); } }),
+    h('label', { class: 'f' }, 'سطر مميز أعلى القوانين (اختياري)'),
+    h('input', { type: 'text', value: c.highlight || '', maxLength: 300, placeholder: 'مثال: جميع المميزات قابلة للزيادة والنقصان', oninput: (e) => { c.highlight = e.target.value; rDirty(); } }),
+    h('label', { class: 'f' }, 'ملاحظات أعلى القسم (اختياري)'),
+    (c.intro || []).map((t, j) => h('div', { class: 'rrow' },
+      h('textarea', { value: t, oninput: (e) => { c.intro[j] = e.target.value; rDirty(); } }),
+      h('div', { class: 'qtools' }, h('button', { class: 'btn danger sm', onclick: () => { c.intro.splice(j, 1); rDirty(); renderSite(); } }, '✕')))),
+    h('div', { class: 'row' }, h('button', { class: 'btn sec sm', disabled: (c.intro || []).length >= 10, onclick: () => { (c.intro = c.intro || []).push(''); rDirty(); focusLast = '.rrow textarea'; renderSite(); } }, '＋ ملاحظة'))));
+  box.append(h('div', { class: 'row', style: 'justify-content:space-between;margin:16px 0 4px' },
+    h('div', { class: 'qhead', style: 'margin:0' }, `القوانين (${c.rules.length})`),
+    h('button', { class: 'btn', onclick: () => { c.rules.push(''); rDirty(); focusLast = '.rlist textarea'; renderSite(); } }, '＋ قانون جديد')));
+  const list = h('div', { class: 'card rlist' });
+  if (!c.rules.length) list.append(h('div', { class: 'empty' }, 'لا توجد قوانين في هذا القسم.'));
+  c.rules.forEach((t, j) => list.append(h('div', { class: 'rrow' },
+    h('span', { class: 'num' }, (j + 1) + '-'),
+    h('textarea', { value: t, placeholder: 'نص القانون', oninput: (e) => { c.rules[j] = e.target.value; rDirty(); } }),
+    h('div', { class: 'qtools' },
+      h('button', { class: 'btn sec sm', disabled: j === 0, onclick: () => { [c.rules[j - 1], c.rules[j]] = [c.rules[j], c.rules[j - 1]]; rDirty(); renderSite(); } }, '↑'),
+      h('button', { class: 'btn sec sm', disabled: j === c.rules.length - 1, onclick: () => { [c.rules[j + 1], c.rules[j]] = [c.rules[j], c.rules[j + 1]]; rDirty(); renderSite(); } }, '↓'),
+      h('button', { class: 'btn danger sm', onclick: () => { c.rules.splice(j, 1); rDirty(); renderSite(); } }, 'حذف')))));
+  box.append(list);
+}
+SAVERS.rules = {
+  async save() { try { const r = await api('site/rules', 'PUT', { rules: R }); R = r.rules; RS = JSON.stringify(R); if (RC >= R.length) RC = 0; rDirty(); renderSite(); toast('✅ تم حفظ القوانين'); } catch (e) { toast(e.message, true); } },
+  discard() { R = JSON.parse(RS); if (RC >= R.length) RC = 0; rDirty(); renderSite(); },
+};
+
+/* تواصل معنا */
+const cDirty = () => setDirty('contacts', JSON.stringify(C) !== CS);
+function fileToImageDataUrl(file) { // يصغّر الصورة لـ 512px كحد أقصى
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(new Error('تعذّر قراءة الملف'));
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('الملف ليس صورة صالحة'));
+      img.onload = () => {
+        const k = Math.min(1, 512 / Math.max(img.width, img.height));
+        const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(img.width * k)); cv.height = Math.max(1, Math.round(img.height * k));
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        resolve(cv.toDataURL('image/png'));
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+function imgInput(obj, dirtyFn) { // input مخفي لرفع صورة وتعيينها في obj.image
+  return h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', hidden: true, onchange: async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const data = await fileToImageDataUrl(f);
+      const r = await api('site/upload', 'POST', { data });
+      obj.image = r.url; dirtyFn(); renderSite(); toast('✅ تم رفع الصورة — لا تنسى «حفظ»');
+    } catch (err) { toast(err.message, true); }
+  } });
+}
+function renderContacts(box) {
+  box.append(h('div', { class: 'row', style: 'justify-content:space-between;margin:0 0 14px' },
+    h('div', { class: 'hint' }, 'كل وسيلة تواصل لها صورة واسم (والرابط اختياري). بدون رابط يظهر الزر «قريباً».'),
+    h('button', { class: 'btn', disabled: C.length >= 24, onclick: () => { C.push({ name: '', description: '', url: '', buttonText: '', image: '' }); cDirty(); focusLast = '.cname'; renderSite(); } }, '＋ تواصل جديد')));
+  if (!C.length) box.append(h('div', { class: 'card empty' }, 'لا توجد وسائل تواصل.'));
+  C.forEach((c, i) => {
+    const pic = h('div', { class: 'pic' }, c.image ? h('img', { src: c.image, alt: '' }) : '🖼️');
+    const file = imgInput(c, cDirty);
+    const field = (key, ph, extra = {}) => h('input', { type: 'text', value: c[key] || '', placeholder: ph, oninput: (e) => { c[key] = e.target.value; cDirty(); }, ...extra });
+    box.append(h('div', { class: 'card' },
+      h('div', { class: 'qhead' }, h('span', {}, `تواصل ${i + 1}`),
+        h('div', { class: 'qtools' },
+          h('button', { class: 'btn sec sm', disabled: i === 0, onclick: () => { [C[i - 1], C[i]] = [C[i], C[i - 1]]; cDirty(); renderSite(); } }, '↑'),
+          h('button', { class: 'btn sec sm', disabled: i === C.length - 1, onclick: () => { [C[i + 1], C[i]] = [C[i], C[i + 1]]; cDirty(); renderSite(); } }, '↓'),
+          h('button', { class: 'btn danger sm', onclick: () => { if (confirm('حذف وسيلة التواصل هذه؟')) { C.splice(i, 1); cDirty(); renderSite(); } } }, 'حذف'))),
+      h('div', { class: 'contact-card' },
+        h('div', { style: 'display:grid;gap:8px;justify-items:center' }, pic,
+          h('button', { class: 'btn sec sm', onclick: () => file.click() }, c.image ? 'تغيير الصورة' : 'رفع صورة'), file,
+          c.image ? h('button', { class: 'btn danger sm', onclick: () => { c.image = ''; cDirty(); renderSite(); } }, 'إزالة') : null),
+        h('div', { class: 'fields' },
+          field('name', 'الاسم (مثال: ديسكورد)', { class: 'cname', maxLength: 60 }),
+          field('description', 'وصف قصير', { maxLength: 300 }),
+          field('url', 'الرابط https://...', { style: 'direction:ltr', maxLength: 300 }),
+          field('buttonText', 'نص الزر (مثال: انضم الآن)', { maxLength: 30 })))));
+  });
+}
+SAVERS.contacts = {
+  async save() { try { const r = await api('site/contacts', 'PUT', { contacts: C }); C = r.contacts; CS = JSON.stringify(C); cDirty(); renderSite(); toast('✅ تم حفظ وسائل التواصل'); } catch (e) { toast(e.message, true); } },
+  discard() { C = JSON.parse(CS); cDirty(); renderSite(); },
+};
+
+
+/* تعليمات الاختبار */
+const qDirty = () => setDirty('quiz', JSON.stringify(QI) !== QIS);
+function renderQuiz(box) {
+  QI.paragraphs = QI.paragraphs || [];
+  const f = (key, label, ph, max) => [h('label', { class: 'f' }, label),
+    h('input', { type: 'text', value: QI[key] || '', placeholder: ph || '', maxLength: max, oninput: (e) => { QI[key] = e.target.value; qDirty(); } })];
+  box.append(h('div', { class: 'card' },
+    f('title', 'عنوان التعليمات', 'تعليمات وشروط الاختبار', 100),
+    h('label', { class: 'f' }, 'فقرات التعليمات'),
+    h('div', { class: 'hint', style: 'margin:-2px 0 6px' }, 'اكتب {minutes} داخل أي فقرة ويتبدل تلقائياً بمدة الاختبار.'),
+    QI.paragraphs.map((t, j) => h('div', { class: 'rrow' },
+      h('span', { class: 'num' }, (j + 1) + '-'),
+      h('textarea', { value: t, oninput: (e) => { QI.paragraphs[j] = e.target.value; qDirty(); } }),
+      h('div', { class: 'qtools' },
+        h('button', { class: 'btn sec sm', disabled: j === 0, onclick: () => { [QI.paragraphs[j - 1], QI.paragraphs[j]] = [QI.paragraphs[j], QI.paragraphs[j - 1]]; qDirty(); renderSite(); } }, '↑'),
+        h('button', { class: 'btn sec sm', disabled: j === QI.paragraphs.length - 1, onclick: () => { [QI.paragraphs[j + 1], QI.paragraphs[j]] = [QI.paragraphs[j], QI.paragraphs[j + 1]]; qDirty(); renderSite(); } }, '↓'),
+        h('button', { class: 'btn danger sm', onclick: () => { QI.paragraphs.splice(j, 1); qDirty(); renderSite(); } }, 'حذف')))),
+    h('div', { class: 'row' }, h('button', { class: 'btn sec sm', disabled: QI.paragraphs.length >= 12, onclick: () => { QI.paragraphs.push(''); qDirty(); focusLast = '.rrow textarea'; renderSite(); } }, '＋ فقرة')),
+    f('startMessage', 'رسالة قبل البدء', 'استعن بالله وابدأ الاختبار', 120),
+    f('agreeText', 'نص خانة الموافقة', 'أوافق على جميع الشروط والأحكام ✅', 150),
+    h('label', { class: 'f' }, 'مدة الاختبار (بالدقائق)'),
+    h('input', { type: 'number', min: 1, max: 180, value: QI.durationMinutes, oninput: (e) => { QI.durationMinutes = +e.target.value; qDirty(); } }),
+    h('div', { class: 'hint' }, 'هذي المدة هي اللي يشتغل عليها المؤقت في صفحة الاختبار.')));
+}
+SAVERS.quiz = {
+  async save() { try { const r = await api('site/quiz', 'PUT', QI); QI = r.quizIntro; QIS = JSON.stringify(QI); qDirty(); renderSite(); toast('✅ تم حفظ التعليمات'); } catch (e) { toast(e.message, true); } },
+  discard() { QI = JSON.parse(QIS); qDirty(); renderSite(); },
+};
+
+/* الطاقم الإداري */
+const sDirty = () => setDirty('staff', JSON.stringify(ST) !== STS);
+const STYLE_LABELS = { featured: 'بارز (شخص واحد كبير في الأعلى)', cols1: 'عمود واحد (وسط)', cols2: 'عمودين', cols3: '3 أعمدة' };
+function renderStaff(box) {
+  box.append(h('div', { class: 'hint', style: 'margin-bottom:10px' }, 'الطاقم مقسّم لأقسام (أصحاب السيرفر، الإدارة العليا...). أضف أو احذف أو غيّر أماكن الأعضاء ويمكنك نقل العضو لقسم ثاني.'));
+  box.append(h('div', { class: 'chips' },
+    ST.map((t, i) => h('button', { class: 'chip' + (i === SC ? ' active' : ''), onclick: () => { SC = i; renderSite(); } }, t.title || (t.style === 'featured' ? '⭐ البارز' : '(بدون اسم)'))),
+    h('button', { class: 'chip add', disabled: ST.length >= 12, onclick: () => { ST.push({ title: 'قسم جديد', style: 'cols3', members: [] }); SC = ST.length - 1; sDirty(); focusLast = '.stitle'; renderSite(); } }, '＋ قسم جديد')));
+  const t = ST[SC];
+  if (!t) { box.append(h('div', { class: 'card empty' }, 'لا توجد أقسام. أضف قسم جديد.')); return; }
+  t.members = t.members || [];
+  box.append(h('div', { class: 'card' },
+    h('div', { class: 'qhead' }, h('span', {}, 'اسم القسم'),
+      h('div', { class: 'qtools' },
+        h('button', { class: 'btn sec sm', disabled: SC === 0, title: 'تقديم', onclick: () => { [ST[SC - 1], ST[SC]] = [ST[SC], ST[SC - 1]]; SC--; sDirty(); renderSite(); } }, '→'),
+        h('button', { class: 'btn sec sm', disabled: SC === ST.length - 1, title: 'تأخير', onclick: () => { [ST[SC + 1], ST[SC]] = [ST[SC], ST[SC + 1]]; SC++; sDirty(); renderSite(); } }, '←'),
+        h('button', { class: 'btn danger sm', onclick: () => { if (confirm(`حذف القسم «${t.title}» بكل أعضائه؟`)) { ST.splice(SC, 1); SC = Math.max(0, SC - 1); sDirty(); renderSite(); } } }, 'حذف القسم'))),
+    h('input', { type: 'text', class: 'stitle', value: t.title, maxLength: 80, placeholder: 'اسم القسم (اتركه فاضي للقسم البارز)', oninput: (e) => { t.title = e.target.value; sDirty(); } }),
+    h('label', { class: 'f' }, 'شكل العرض'),
+    h('select', { onchange: (e) => { t.style = e.target.value; sDirty(); renderSite(); } },
+      Object.entries(STYLE_LABELS).map(([k, v]) => h('option', { value: k, selected: t.style === k }, v)))));
+  box.append(h('div', { class: 'row', style: 'justify-content:space-between;margin:16px 0 4px' },
+    h('div', { class: 'qhead', style: 'margin:0' }, `الأعضاء (${t.members.length})`),
+    h('button', { class: 'btn', disabled: t.members.length >= 40, onclick: () => { t.members.push({ name: '', role: '', description: '', image: '' }); sDirty(); focusLast = '.mname'; renderSite(); } }, '＋ عضو جديد')));
+  if (!t.members.length) box.append(h('div', { class: 'card empty' }, 'لا يوجد أعضاء في هذا القسم.'));
+  t.members.forEach((m, i) => {
+    const pic = h('div', { class: 'pic' }, m.image ? h('img', { src: m.image, alt: '' }) : '🖼️');
+    const file = imgInput(m, sDirty);
+    const fld = (key, ph, extra = {}) => h('input', { type: 'text', value: m[key] || '', placeholder: ph, oninput: (e) => { m[key] = e.target.value; sDirty(); }, ...extra });
+    const move = h('select', { title: 'نقل لقسم آخر', onchange: (e) => {
+      const to = ST[+e.target.value]; if (!to) return;
+      t.members.splice(i, 1); (to.members = to.members || []).push(m); sDirty(); renderSite(); toast('تم النقل إلى «' + (to.title || 'القسم') + '»');
+    } }, h('option', { value: '' }, '↪ نقل إلى...'),
+      ST.map((x, k) => k === SC ? null : h('option', { value: k }, x.title || (x.style === 'featured' ? '⭐ البارز' : 'قسم ' + (k + 1)))));
+    box.append(h('div', { class: 'card' },
+      h('div', { class: 'qhead' }, h('span', {}, `عضو ${i + 1}`),
+        h('div', { class: 'qtools' }, ST.length > 1 ? move : null,
+          h('button', { class: 'btn sec sm', disabled: i === 0, onclick: () => { [t.members[i - 1], t.members[i]] = [t.members[i], t.members[i - 1]]; sDirty(); renderSite(); } }, '↑'),
+          h('button', { class: 'btn sec sm', disabled: i === t.members.length - 1, onclick: () => { [t.members[i + 1], t.members[i]] = [t.members[i], t.members[i + 1]]; sDirty(); renderSite(); } }, '↓'),
+          h('button', { class: 'btn danger sm', onclick: () => { if (confirm('حذف هذا العضو؟')) { t.members.splice(i, 1); sDirty(); renderSite(); } } }, 'حذف'))),
+      h('div', { class: 'contact-card' },
+        h('div', { style: 'display:grid;gap:8px;justify-items:center' }, pic,
+          h('button', { class: 'btn sec sm', onclick: () => file.click() }, m.image ? 'تغيير الصورة' : 'رفع صورة'), file,
+          m.image ? h('button', { class: 'btn danger sm', onclick: () => { m.image = ''; sDirty(); renderSite(); } }, 'إزالة') : null),
+        h('div', { class: 'fields' },
+          fld('name', 'الاسم', { class: 'mname', maxLength: 80 }),
+          fld('role', 'الرتبة (مثال: 👑 Co Owner)', { maxLength: 80 }),
+          t.style === 'featured' ? fld('description', 'وصف تحت الاسم (اختياري)', { maxLength: 300 }) : null))));
+  });
+}
+SAVERS.staff = {
+  async save() { try { const r = await api('site/staff', 'PUT', { staff: ST }); ST = r.staff; STS = JSON.stringify(ST); if (SC >= ST.length) SC = 0; sDirty(); renderSite(); toast('✅ تم حفظ الطاقم الإداري'); } catch (e) { toast(e.message, true); } },
+  discard() { ST = JSON.parse(STS); if (SC >= ST.length) SC = 0; sDirty(); renderSite(); },
+};
+
+/* ---------- init ---------- */
+(async () => {
+  try { ME = await api('me'); } catch (e) { toast(e.message, true); }
+  renderTabs();
+  if (access('questions')) loadQ().catch(e => toast(e.message, true)); else lockPane('questions');
+  if (access('settings')) loadSettings().catch(e => toast(e.message, true)); else lockPane('settings');
+  if (!access('subs')) lockPane('subs');
+  if (!access('site')) lockPane('site');
+  renderPerm('questions');
+})();
 </script>
 </body>
 </html>

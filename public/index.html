@@ -464,7 +464,13 @@ nav a.locked-laws{color:#7d7767!important;opacity:.6;cursor:not-allowed!importan
 .name-input::placeholder,.discord-id-input::placeholder{color:#7d7666}
 .name-input:focus,.discord-id-input:focus{border-color:var(--line-str);box-shadow:0 0 0 3px rgba(212,174,86,.1)}
 .discord-id-input{direction:ltr;text-align:left}
-.nav-login{display:flex;align-items:center}
+.nav-login{display:flex;align-items:center;gap:8px}
+.head-cta .nav-login .nl-admin{padding:8px 12px;font-size:13px}
+.head-cta .nav-login .nl-user{max-width:120px;padding:4px 10px 4px 5px;font-size:13px}
+.nav-login-m{flex-wrap:wrap}
+@media(min-width:1001px) and (max-width:1280px){.head-cta .nav-login .nl-user .nm{display:none}.head-cta .nav-login .nl-user{padding:4px}.head-cta .nav-login .nl-admin{padding:8px 10px;font-size:12.5px}.head-cta .nav-login .nl-btn{padding:8px 12px;font-size:13px}}
+.nav-login .nl-admin{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:99px;border:1px solid var(--gold);background:rgba(212,174,86,.1);color:var(--gold-lt);font:inherit;font-weight:800;font-size:14px;text-decoration:none;white-space:nowrap;transition:.25s}
+.nav-login .nl-admin:hover{background:linear-gradient(135deg,#f7e6bb,#d4ae56);color:#140f04}
 .nav-login .nl-btn{display:inline-flex;align-items:center;gap:8px;padding:10px 18px;border-radius:99px;border:1px solid var(--gold);background:linear-gradient(135deg,#f7e6bb,#d4ae56);color:#140f04;font:inherit;font-weight:800;font-size:14px;text-decoration:none;cursor:pointer;white-space:nowrap}
 .nav-login .nl-user{display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 6px;border-radius:99px;border:1px solid var(--line-str);background:rgba(212,174,86,.08);color:var(--gold-lt);font:inherit;font-weight:700;font-size:14px;cursor:pointer;max-width:190px}
 .nav-login .nl-user img,.nav-login .nl-user .av{width:28px;height:28px;border-radius:50%;flex:none;background:var(--gold);color:#140f04;display:grid;place-items:center;font-weight:900}
@@ -519,7 +525,10 @@ footer{text-align:center;padding:38px 18px 30px;margin-top:60px;color:var(--mute
 .hidden{display:none!important}
 
 /* ============================ RESPONSIVE ============================ */
-@media(max-width:1150px){nav a{padding:8px 9px;font-size:13.5px}}
+@media(min-width:1001px) and (max-width:1500px){nav{gap:1px}nav a{padding:8px 7px;font-size:13px}.head-cta .discord-btn{padding:9px 13px;font-size:13px}}
+@media(min-width:1001px) and (max-width:1100px){nav a{padding:8px 3px!important;font-size:12px!important}.head-cta .nav-login .nl-admin{font-size:0;padding:8px 10px}.head-cta .nav-login .nl-admin:before{content:'🛠️';font-size:15px}header{padding-left:10px!important;padding-right:10px!important}}
+@media(min-width:1001px) and (max-width:1200px){nav a{padding:8px 5px;font-size:12.5px}.head-cta .discord-btn{display:none}.logo-text small{display:none}}
+@media(max-width:1150px) and (min-width:1px){nav a{padding:8px 9px;font-size:13.5px}}
 @media(max-width:1000px){
   nav{display:none}
   .burger{display:flex}
@@ -1007,12 +1016,14 @@ footer{text-align:center;padding:38px 18px 30px;margin-top:60px;color:var(--mute
     <p class="subtitle-text">مقابلة الإدارة — HP1 Police Mod</p>
 
     <div id="rulesScreen" class="content-box">
-      <h2 style="color:var(--gold-lt);margin-bottom:18px;font-weight:900">تعليمات وشروط الاختبار 🔴</h2>
+      <h2 id="introTitle" style="color:var(--gold-lt);margin-bottom:18px;font-weight:900">تعليمات وشروط الاختبار 🔴</h2>
+      <div id="introParas">
       <p class="rules-note">هذا اختبار إلكتروني (اختيار من متعدد)، اختر الإجابة الصحيحة من بين الخيارات المتاحة لكل سؤال.</p>
       <p class="rules-note">يجب عليك الالتزام بالأنظمة والتعليمات والإجابة بناءً على معرفتك وفهمك لمهام وصلاحيات الإدارة.</p>
       <p class="rules-note" style="margin-bottom:18px">ستظهر لك النتيجة مباشرة بعد الانتهاء من جميع الأسئلة، ومدة الاختبار 15 دقيقة.</p>
+      </div>
 
-      <div class="start-message">استعن بالله وابدأ الاختبار</div>
+      <div class="start-message" id="startMsg">استعن بالله وابدأ الاختبار</div>
 
       <label class="name-label" for="playerName">اكتب اسمك 📝</label>
       <input type="text" id="playerName" class="name-input" placeholder="مثال : فارس الخالدي" autocomplete="off">
@@ -1032,7 +1043,7 @@ footer{text-align:center;padding:38px 18px 30px;margin-top:60px;color:var(--mute
 
       <label class="agree-box" for="agree">
         <input type="checkbox" id="agree">
-        أوافق على جميع الشروط والأحكام ✅
+        <span id="agreeText">أوافق على جميع الشروط والأحكام ✅</span>
       </label>
 
       <button class="btn" id="startBtn" disabled onclick="startQuiz()">ابدأ الاختبار</button>
@@ -1131,6 +1142,7 @@ function renderNavLogin(me){
       else{const av=document.createElement("div");av.className="av";av.textContent=(me.name||"?").slice(0,1);b.append(av)}
       const nm=document.createElement("span");nm.className="nm";nm.textContent=me.name;b.append(nm);
       b.onclick=async()=>{if(!confirm("تسجيل الخروج من ديسكورد؟"))return;await fetch("/auth/logout",{method:"POST"});await loadMe()};
+      if(me.isAdmin){const ad=document.createElement("a");ad.className="nl-admin";ad.href="/admin";ad.textContent="🛠️ لوحة التحكم";slot.append(ad)}
       slot.append(b);
     }else{
       const a=document.createElement("a");a.className="nl-btn";a.href="/auth/discord";a.textContent="🔐 تسجيل الدخول";
@@ -1163,7 +1175,7 @@ async function loadQuiz(){
 }
 
 /* ===================== STATE ===================== */
-let current=0, time=900, timerInterval=null;
+let current=0, QUIZ_MIN=15, time=900, timerInterval=null;
 let playerNameValue="", discordIdValue="", ageValue="";
 let answers=[];
 let RETRY_DELAY_MS=60*60*1000;
@@ -1313,6 +1325,96 @@ function filterLaws(q){
   msg.style.display=shown?"none":"block";
 }
 
+/* ===================== SITE CONTENT (قوانين + تواصل) من لوحة التحكم ===================== */
+function mk(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+function renderLaws(cats){
+  const tabs=document.querySelector(".law-tabs"),panels=document.querySelector(".law-panels");
+  tabs.replaceChildren();panels.replaceChildren();
+  cats.forEach((c,i)=>{
+    const b=mk("button","law-tab-btn"+(i?"":" active"),c.title);b.type="button";
+    b.addEventListener("click",()=>switchLawTab(c.id,b));tabs.append(b);
+    const p=mk("div","law-panel"+(i?" hidden":""));p.id="lawPanel-"+c.id;
+    (c.intro||[]).forEach(t=>{const r=mk("div","rule-card",t);r.style.cssText="margin-bottom:14px;border-right-color:var(--gold)";p.append(r)});
+    if(c.highlight){const h=mk("p",null,c.highlight);h.style.cssText="color:var(--gold-lt);text-align:center;font-weight:800;margin-bottom:20px";p.append(h)}
+    const list=mk("div","rules-list");
+    (c.rules||[]).forEach((t,j)=>list.append(mk("div","rule-card",(j+1)+"- "+t)));
+    p.append(list);panels.append(p);
+  });
+  document.getElementById("lawSearch").value="";
+}
+function renderContacts(list){
+  const grid=document.querySelector("#contact .social-grid");
+  grid.replaceChildren();
+  list.forEach(c=>{
+    const card=mk("div","social-card"),ic=mk("div","social-icon");
+    if(c.image){const im=document.createElement("img");im.src=c.image;im.alt=c.name;im.dataset.fb="◈";
+      im.addEventListener("error",()=>{const d=mk("div","avatar-fallback","◈");im.replaceWith(d)});ic.append(im)}
+    else ic.textContent="◈";
+    card.append(ic,mk("h3",null,c.name),mk("p",null,c.description||""));
+    if(c.url){const a=mk("a","btn small-btn",c.buttonText||"تواصل معنا");a.href=c.url;a.target="_blank";a.rel="noopener noreferrer";card.append(a)}
+    else{const b=mk("button","btn small-btn","...Soon");b.disabled=true;card.append(b)}
+    grid.append(card);
+  });
+}
+function renderQuizIntro(q){
+  QUIZ_MIN=q.durationMinutes||15;time=QUIZ_MIN*60;
+  const fmt=t=>String(t).replace(/\{minutes\}/g,QUIZ_MIN);
+  document.getElementById("introTitle").textContent=q.title||"";
+  const box=document.getElementById("introParas");box.replaceChildren();
+  const ps=q.paragraphs||[];
+  ps.forEach((t,i)=>{const p=mk("p","rules-note",fmt(t));if(i===ps.length-1)p.style.marginBottom="18px";box.append(p)});
+  document.getElementById("startMsg").textContent=q.startMessage||"";
+  document.getElementById("agreeText").textContent=q.agreeText||"";
+  document.getElementById("timer").textContent=String(QUIZ_MIN).padStart(2,"0")+":00";
+}
+function avatarEl(m,lg){
+  const c=mk("div","avatar-container"+(lg?" lg":""));
+  const fb=()=>{c.replaceChildren(mk("div","avatar-fallback",(m.name||"?").trim().slice(0,1)))};
+  if(m.image){const im=document.createElement("img");im.src=m.image;im.alt=m.name;im.addEventListener("error",fb);c.append(im)}else fb();
+  return c;
+}
+function renderStaff(tiers){
+  const sec=document.getElementById("founders");
+  sec.querySelectorAll(".founder-highlight,.staff-tier").forEach(e=>e.remove());
+  const GRID={cols1:"tier-2",cols2:"tier-1",cols3:"tier-3"};
+  tiers.forEach(t=>{
+    if(!(t.members||[]).length)return;
+    if(t.style==="featured"){
+      t.members.forEach(m=>{
+        const f=mk("div","founder-highlight reveal");
+        f.append(avatarEl(m,true),mk("div","contact-name",m.name));
+        if(m.role)f.append(mk("span","crown-tag",m.role));
+        if(m.description)f.append(mk("p","founder-desc",m.description));
+        sec.append(f);
+      });return;
+    }
+    const tier=mk("div","staff-tier reveal");
+    if(t.title){
+      const l=mk("div","staff-tier-label");
+      l.append(mk("span","tier-line rtl-flip"),mk("span","lbl",t.title),mk("span","tier-line"));tier.append(l);
+    }
+    const g=mk("div","staff-grid "+(GRID[t.style]||"tier-3"));
+    if(t.style==="cols1")g.style.cssText="grid-template-columns:1fr;max-width:520px;margin:0 auto";
+    t.members.forEach(m=>{
+      const card=mk("div","staff-card"),info=mk("div","staff-info");
+      info.append(mk("div","staff-name",m.name));
+      if(m.role)info.append(mk("span","staff-role",m.role));
+      card.append(avatarEl(m,false),info);g.append(card);
+    });
+    tier.append(g);sec.append(tier);
+  });
+}
+(async function loadSite(){
+  try{
+    const r=await fetch("/api/site",{cache:"no-store"});if(!r.ok)return;
+    const d=await r.json();
+    if(Array.isArray(d.rules)&&d.rules.length)renderLaws(d.rules);
+    if(Array.isArray(d.contacts))renderContacts(d.contacts);
+    if(Array.isArray(d.staff)&&d.staff.length)renderStaff(d.staff);
+    if(d.quizIntro)renderQuizIntro(d.quizIntro);
+  }catch(e){console.error("Site content load error",e)}
+})();
+
 /* ===================== RETRY COOLDOWN ===================== */
 function getRetryStorageKey(){
   const d=discordId.value.trim();
@@ -1383,7 +1485,7 @@ async function startQuiz(){
   ageValue=ageInput.value.trim();
 
   quizIsRunning=true; setLawsLocked(true);
-  current=0; time=900; answers=[];
+  current=0; time=QUIZ_MIN*60; answers=[];
 
   document.getElementById("rulesScreen").classList.add("hidden");
   document.getElementById("resultScreen").classList.add("hidden");

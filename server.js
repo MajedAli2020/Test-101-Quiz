@@ -64,7 +64,11 @@ const FILES = {
   config: path.join(DATA_DIR, 'config.json'),
   submissions: path.join(DATA_DIR, 'submissions.json'),
   owner: path.join(DATA_DIR, 'owner.json'),
+  site: path.join(DATA_DIR, 'site.json'),
+  perms: path.join(DATA_DIR, 'perms.json'),
 };
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const readJSON = (f, fallback) => {
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; }
 };
@@ -85,6 +89,136 @@ const getAdminRoleIds = () => {
   const c = getOwnerCfg();
   return c.adminRoleIds !== null ? c.adminRoleIds : (ADMIN_ROLE_ID ? [ADMIN_ROLE_ID] : []);
 };
+
+/* ---- خانات اللوحة + صلاحية كل خانة (يحددها المالك) ---- */
+const TABS = ['questions', 'settings', 'subs', 'site'];
+// perms.json: { [tab]: [roleIds] }  — الخانة بدون قيد = كل من يدخل اللوحة
+const getPerms = () => {
+  const p = readJSON(FILES.perms, {});
+  const out = {};
+  for (const t of TABS) out[t] = Array.isArray(p[t]) ? p[t].filter((x) => /^\d{17,20}$/.test(x)) : null;
+  return out;
+};
+const tabForPath = (p) =>
+  p === '/admin/api/questions' ? 'questions'
+  : p === '/admin/api/config' ? 'settings'
+  : p === '/admin/api/submissions' || p.startsWith('/admin/api/submissions/') || p === '/admin/api/cooldown/reset' ? 'subs'
+  : p.startsWith('/admin/api/site') ? 'site' : null;
+
+/* رولات العضو من ديسكورد عبر البوت (كاش قصير) */
+const memberCache = new Map();
+async function memberRoles(id) {
+  const c = memberCache.get(id);
+  if (c && c.exp > Date.now()) return c.roles;
+  const m = await discordApi('GET', `/guilds/${D.guildId}/members/${id}`);
+  const roles = m && Array.isArray(m.roles) ? m.roles : null; // null = مو في السيرفر / تعذّر الجلب
+  memberCache.set(id, { roles, exp: Date.now() + (roles ? 45_000 : 20_000) });
+  if (memberCache.size > 2000) memberCache.clear();
+  return roles;
+}
+async function isAdminUser(id) {
+  if (id === OWNER_ID) return true;
+  const roles = await memberRoles(id);
+  const allowed = getAdminRoleIds();
+  return !!roles && roles.some((r) => allowed.includes(r));
+}
+/* خريطة {tab: true/false} لما يقدر يفتحه هذا المستخدم */
+async function tabAccess(userId) {
+  const res = {};
+  if (userId === OWNER_ID) { for (const t of TABS) res[t] = true; return res; }
+  const roles = await memberRoles(userId);
+  const admin = !!roles && roles.some((r) => getAdminRoleIds().includes(r));
+  const perms = getPerms();
+  for (const t of TABS) res[t] = admin && (perms[t] === null || perms[t].some((r) => roles.includes(r)));
+  return res;
+}
+
+/* ---- محتوى الموقع (قوانين + تواصل) ---- */
+const getSite = () => {
+  const s = readJSON(FILES.site, {});
+  return { rules: Array.isArray(s.rules) ? s.rules : [], contacts: Array.isArray(s.contacts) ? s.contacts : [],
+    staff: Array.isArray(s.staff) ? s.staff : [], quizIntro: s.quizIntro && typeof s.quizIntro === 'object' ? s.quizIntro : null };
+};
+const IMG_RE = /^\/(?:uploads\/)?[\w.-]{1,80}\.(?:png|jpe?g|webp|gif)$/i;
+const str = (v, max, what) => {
+  const t = String(v ?? '').trim();
+  if (t.length > max) throw new Error(`${what}: أطول من ${max} حرف.`);
+  return t;
+};
+const newId = (used, given) => {
+  const id = typeof given === 'string' && /^[\w-]{1,40}$/.test(given) && !used.has(given) ? given : 'x' + crypto.randomBytes(4).toString('hex');
+  used.add(id); return id;
+};
+function validateRules(list) {
+  if (!Array.isArray(list) || list.length < 1 || list.length > 12) throw new Error('عدد أقسام القوانين من 1 إلى 12.');
+  const used = new Set();
+  return list.map((c, i) => {
+    const title = str(c.title, 40, `القسم ${i + 1}`);
+    if (!title) throw new Error(`القسم ${i + 1}: اكتب اسم القسم.`);
+    const rules = (Array.isArray(c.rules) ? c.rules : []).map((r) => str(r, 1000, `قانون في «${title}»`)).filter(Boolean);
+    if (rules.length > 300) throw new Error(`«${title}»: الحد 300 قانون.`);
+    const intro = (Array.isArray(c.intro) ? c.intro : []).map((r) => str(r, 1000, `ملاحظة في «${title}»`)).filter(Boolean);
+    if (intro.length > 10) throw new Error(`«${title}»: الحد 10 ملاحظات.`);
+    return { id: newId(used, c.id), title, intro, highlight: str(c.highlight, 300, `سطر مميز في «${title}»`), rules };
+  });
+}
+function validateContacts(list) {
+  if (!Array.isArray(list) || list.length > 24) throw new Error('الحد الأقصى 24 وسيلة تواصل.');
+  const used = new Set();
+  return list.map((c, i) => {
+    const name = str(c.name, 60, `التواصل ${i + 1}`);
+    if (!name) throw new Error(`التواصل ${i + 1}: الاسم مطلوب.`);
+    const url = str(c.url, 300, `رابط «${name}»`);
+    if (url && !/^https?:\/\/[^\s]+$/i.test(url)) throw new Error(`رابط «${name}» يجب أن يبدأ بـ https://`);
+    const image = str(c.image, 120, `صورة «${name}»`);
+    if (image && !IMG_RE.test(image)) throw new Error(`صورة «${name}» غير صالحة.`);
+    return { id: newId(used, c.id), name, description: str(c.description, 300, `وصف «${name}»`), url, buttonText: str(c.buttonText, 30, `زر «${name}»`), image };
+  });
+}
+const STAFF_STYLES = ['featured', 'cols1', 'cols2', 'cols3'];
+function validateStaff(list) {
+  if (!Array.isArray(list) || list.length > 12) throw new Error('الحد الأقصى 12 قسم في الطاقم الإداري.');
+  const used = new Set();
+  return list.map((t, i) => {
+    const style = STAFF_STYLES.includes(t.style) ? t.style : 'cols3';
+    const title = str(t.title, 80, `القسم ${i + 1}`);
+    const members = (Array.isArray(t.members) ? t.members : []).map((m, j) => {
+      const name = str(m.name, 80, `عضو ${j + 1} في «${title || 'القسم ' + (i + 1)}»`);
+      if (!name) throw new Error(`عضو ${j + 1} في «${title || 'القسم ' + (i + 1)}»: الاسم مطلوب.`);
+      const image = str(m.image, 120, `صورة «${name}»`);
+      if (image && !IMG_RE.test(image)) throw new Error(`صورة «${name}» غير صالحة.`);
+      return { id: newId(used, m.id), name, role: str(m.role, 80, `رتبة «${name}»`), description: str(m.description, 300, `وصف «${name}»`), image };
+    });
+    if (members.length > 40) throw new Error('الحد الأقصى 40 عضو في القسم.');
+    return { id: newId(used, t.id), title, style, members };
+  });
+}
+function validateQuizIntro(b) {
+  const paragraphs = (Array.isArray(b.paragraphs) ? b.paragraphs : []).map((x) => str(x, 1000, 'فقرة التعليمات')).filter(Boolean);
+  if (paragraphs.length > 12) throw new Error('الحد الأقصى 12 فقرة.');
+  const durationMinutes = Number(b.durationMinutes);
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 180) throw new Error('مدة الاختبار من 1 إلى 180 دقيقة.');
+  return { title: str(b.title, 100, 'العنوان'), paragraphs, startMessage: str(b.startMessage, 120, 'رسالة البداية'),
+    agreeText: str(b.agreeText, 150, 'نص الموافقة'), durationMinutes };
+}
+/* يحذف الصور اللي ما عاد أحد يستخدمها (مع مهلة ساعة عشان الصور المرفوعة وما انحفظت بعد) */
+function pruneUploads() {
+  const site = getSite();
+  const imgs = [...site.contacts.map((c) => c.image), ...site.staff.flatMap((t) => (t.members || []).map((m) => m.image))];
+  const keep = new Set(imgs.filter((x) => typeof x === 'string' && x.startsWith('/uploads/')).map((x) => x.slice(9)));
+  try {
+    for (const f of fs.readdirSync(UPLOAD_DIR)) {
+      const fp = path.join(UPLOAD_DIR, f);
+      if (!keep.has(f) && Date.now() - fs.statSync(fp).mtimeMs > 3600_000) fs.unlinkSync(fp);
+    }
+  } catch (e) { console.error('prune', e.message); }
+}
+const IMG_TYPES = [
+  { ext: 'png', ok: (b) => b.length > 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
+  { ext: 'jpg', ok: (b) => b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  { ext: 'gif', ok: (b) => b.length > 6 && /^GIF8[79]a/.test(b.subarray(0, 6).toString('latin1')) },
+  { ext: 'webp', ok: (b) => b.length > 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP' },
+];
 
 /* ---------------------------- helpers ---------------------------- */
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
@@ -224,14 +358,14 @@ const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon', '.json': 'application/json', '.txt': 'text/plain; charset=utf-8',
 };
-function serveStatic(req, res, pathname) {
+function serveStatic(req, res, pathname, baseDir = PUBLIC_DIR) {
   let rel;
   try { rel = decodeURIComponent(pathname); } catch { return send(res, 400, 'Bad request'); }
   if (rel === '/') rel = '/index.html';
-  const file = path.normalize(path.join(PUBLIC_DIR, rel));
+  const file = path.normalize(path.join(baseDir, rel));
   const ext = path.extname(file).toLowerCase();
-  // منع الخروج من public + منع الملفات المخفية + السماح بالامتدادات المعروفة فقط
-  if (!file.startsWith(PUBLIC_DIR + path.sep) || rel.split('/').some((p) => p.startsWith('.')) || !MIME[ext]) {
+  // منع الخروج من المجلد + منع الملفات المخفية + السماح بالامتدادات المعروفة فقط
+  if (!file.startsWith(baseDir + path.sep) || rel.split('/').some((p) => p.startsWith('.')) || !MIME[ext]) {
     return send(res, 404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
   }
   fs.stat(file, (err, st) => {
@@ -371,8 +505,12 @@ async function handleAdminApi(req, res, pathname, url) {
   }
 
   if (pathname === '/admin/api/me' && req.method === 'GET') {
-    return json(res, 200, { id: session.u, name: session.name, isOwner: session.isOwner });
+    return json(res, 200, { id: session.u, name: session.name, isOwner: session.isOwner, tabs: await tabAccess(session.u) });
   }
+
+  /* صلاحية الخانة: تُفحص في السيرفر عند كل طلب (الرولات من ديسكورد مباشرة) */
+  const needTab = tabForPath(pathname);
+  if (needTab && !(await tabAccess(session.u))[needTab]) return json(res, 403, { error: '🔒 ما عندك صلاحية لهذه الخانة.', locked: true });
 
   /* ---- إعدادات خاصة: للمالك فقط (يُفحص هنا في السيرفر، مو في الواجهة) ---- */
   if (pathname.startsWith('/admin/api/owner/')) {
@@ -400,7 +538,63 @@ async function handleAdminApi(req, res, pathname, url) {
       console.log('Admin roles changed by owner:', ids.length, 'roles');
       return json(res, 200, { ok: true, selected: ids });
     }
+    /* صلاحيات الخانات: لكل خانة قائمة رولات (null = كل أصحاب اللوحة) */
+    if (pathname === '/admin/api/owner/perms' && req.method === 'GET') return json(res, 200, getPerms());
+    const pm = /^\/admin\/api\/owner\/perms\/(\w+)$/.exec(pathname);
+    if (pm && req.method === 'PUT') {
+      if (!TABS.includes(pm[1])) return json(res, 404, { error: 'خانة غير موجودة.' });
+      const b = await readBody(req, 8192);
+      let ids = null;
+      if (b.roleIds !== null) {
+        if (!Array.isArray(b.roleIds) || b.roleIds.length > 25) return json(res, 400, { error: 'قائمة الرولات غير صالحة.' });
+        ids = [...new Set(b.roleIds.map(String))];
+        if (ids.some((x) => !/^\d{17,20}$/.test(x))) return json(res, 400, { error: 'أيدي رول غير صالح.' });
+      }
+      const all = getPerms(); all[pm[1]] = ids;
+      writeJSON(FILES.perms, all);
+      return json(res, 200, { ok: true, perms: all });
+    }
     return json(res, 404, { error: 'غير موجود.' });
+  }
+
+  /* ---- إعدادات الموقع: القوانين + تواصل معنا ---- */
+  if (pathname === '/admin/api/site' && req.method === 'GET') return json(res, 200, getSite());
+  if (pathname === '/admin/api/site/rules' && req.method === 'PUT') {
+    const b = await readBody(req, 1024 * 1024);
+    try { const rules = validateRules(b.rules); writeJSON(FILES.site, { ...getSite(), rules }); return json(res, 200, { rules }); }
+    catch (e) { return json(res, 400, { error: e.message }); }
+  }
+  if (pathname === '/admin/api/site/contacts' && req.method === 'PUT') {
+    const b = await readBody(req, 1024 * 1024);
+    try {
+      const contacts = validateContacts(b.contacts);
+      writeJSON(FILES.site, { ...getSite(), contacts });
+      pruneUploads();
+      return json(res, 200, { contacts });
+    } catch (e) { return json(res, 400, { error: e.message }); }
+  }
+  if (pathname === '/admin/api/site/staff' && req.method === 'PUT') {
+    const b = await readBody(req, 1024 * 1024);
+    try { const staff = validateStaff(b.staff); writeJSON(FILES.site, { ...getSite(), staff }); pruneUploads(); return json(res, 200, { staff }); }
+    catch (e) { return json(res, 400, { error: e.message }); }
+  }
+  if (pathname === '/admin/api/site/quiz' && req.method === 'PUT') {
+    const b = await readBody(req, 64 * 1024);
+    try { const quizIntro = validateQuizIntro(b); writeJSON(FILES.site, { ...getSite(), quizIntro }); return json(res, 200, { quizIntro }); }
+    catch (e) { return json(res, 400, { error: e.message }); }
+  }
+  if (pathname === '/admin/api/site/upload' && req.method === 'POST') {
+    const b = await readBody(req, 3 * 1024 * 1024);
+    const m = /^data:image\/[\w+.-]+;base64,([A-Za-z0-9+/=]+)$/.exec(String(b.data || ''));
+    if (!m) return json(res, 400, { error: 'ملف الصورة غير صالح.' });
+    const buf = Buffer.from(m[1], 'base64');
+    if (buf.length > 2 * 1024 * 1024) return json(res, 400, { error: 'حجم الصورة أكبر من 2MB.' });
+    const type = IMG_TYPES.find((t) => t.ok(buf));
+    if (!type) return json(res, 400, { error: 'الصيغة غير مدعومة (PNG / JPG / GIF / WEBP).' });
+    if (fs.readdirSync(UPLOAD_DIR).length > 300) return json(res, 400, { error: 'تراكمت صور كثيرة، احفظ التغييرات أولاً.' });
+    const name = crypto.randomBytes(8).toString('hex') + '.' + type.ext;
+    fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
+    return json(res, 200, { url: '/uploads/' + name });
   }
 
   if (pathname === '/admin/api/logout' && req.method === 'POST') {
@@ -452,10 +646,14 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- لوحة التحكم ---- */
     if (pathname === '/admin' || pathname === '/admin/') {
-      const page = readSession(req) ? 'admin.html' : 'login.html';
-      return send(res, 200, fs.readFileSync(path.join(PRIVATE_DIR, page)), {
-        'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow',
-      });
+      const hdr = { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' };
+      let page = readSession(req) ? 'admin.html' : 'login.html';
+      if (page === 'login.html') {
+        // داخل من الموقع وهو مسجّل دخول بديسكورد؟ نتحقق من رولاته ونفتح له اللوحة بدون تسجيل ثاني
+        const u = readUser(req);
+        if (u && await isAdminUser(u.id)) { page = 'admin.html'; hdr['Set-Cookie'] = cookie(makeSession({ id: u.id, name: u.name }), SESSION_HOURS * 3600); }
+      }
+      return send(res, 200, fs.readFileSync(path.join(PRIVATE_DIR, page)), hdr);
     }
     if (pathname.startsWith('/admin/api/')) {
       const g = hit('api:' + clientIp(req), 300, 60_000);
@@ -512,7 +710,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/auth/me' && req.method === 'GET') {
       const u = readUser(req);
-      return json(res, 200, { enabled: LOGIN_ENABLED, loggedIn: !!u, ...(u ? { id: u.id, name: u.name,
+      const isAdmin = u ? await isAdminUser(u.id) : false;
+      return json(res, 200, { enabled: LOGIN_ENABLED, loggedIn: !!u, isAdmin, ...(u ? { id: u.id, name: u.name,
         avatarUrl: u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : null } : {}) });
     }
     if (pathname === '/auth/logout' && req.method === 'POST') {
@@ -547,6 +746,7 @@ const server = http.createServer(async (req, res) => {
         questions: getQuestions().map(({ id, question, options }) => ({ id, question, options })), // بدون الإجابات الصحيحة
       });
     }
+    if (pathname === '/api/site' && req.method === 'GET') return json(res, 200, getSite(), { 'Cache-Control': 'no-cache' });
     if (pathname === '/api/cooldown' && req.method === 'GET') {
       const u = readUser(req);
       return json(res, 200, { remainingMs: u ? remainingCooldown(u.id) : 0 });
@@ -556,6 +756,7 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- الموقع ---- */
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
+    if (pathname.startsWith('/uploads/')) return serveStatic(req, res, pathname.slice(8), UPLOAD_DIR);
     return serveStatic(req, res, pathname);
   } catch (e) {
     if (e && e.status) return json(res, e.status, { error: e.message });
