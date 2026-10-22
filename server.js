@@ -78,7 +78,12 @@ const writeJSON = (f, data) => {
   fs.renameSync(tmp, f);
 };
 const getQuestions = () => readJSON(FILES.questions, []);
-const getConfig = () => ({ passPercent: 60, retryMinutes: 60, ...readJSON(FILES.config, {}) });
+/* نصوص الإشعار الافتراضية — المتغيرات: {name} {mention} {percent} {correct} {total} {pass_percent} {minutes} */
+const DEFAULT_PASS_MSG = '🎉 مبروك! اجتزت اختبار **HP1 Police Mod** بنسبة **{percent}%**.\nسيتم مراجعة طلبك من الإدارة والتواصل معك قريباً.';
+const DEFAULT_FAIL_MSG = '❌ للأسف لم تجتز اختبار **HP1 Police Mod** (نسبتك {percent}%).\nيمكنك إعادة الاختبار بعد {minutes} دقيقة.';
+const getConfig = () => ({ passPercent: 60, retryMinutes: 60, resultsChannelId: '', passMessage: DEFAULT_PASS_MSG, failMessage: DEFAULT_FAIL_MSG, ...readJSON(FILES.config, {}) });
+/* روم النتائج: من الإعدادات في اللوحة، وإن ما انضبط يُستخدم DISCORD_RESULTS_CHANNEL_ID من .env */
+const getResultsChannel = () => { const c = getConfig().resultsChannelId; return /^\d{17,20}$/.test(c || '') ? c : RESULTS_CHANNEL; };
 const getSubmissions = () => readJSON(FILES.submissions, []);
 /* إعدادات المالك: رولات دخول اللوحة (لو ما انحفظت تُستخدم DISCORD_ADMIN_ROLE_ID) + رقم نسخة يُلغي جلسات الإدارة القديمة عند التغيير */
 const getOwnerCfg = () => {
@@ -101,7 +106,7 @@ const getPerms = () => {
 };
 const tabForPath = (p) =>
   p === '/admin/api/questions' ? 'questions'
-  : p === '/admin/api/config' ? 'settings'
+  : p === '/admin/api/config' || p === '/admin/api/channels' ? 'settings'
   : p === '/admin/api/submissions' || p.startsWith('/admin/api/submissions/') || p === '/admin/api/cooldown/reset' ? 'subs'
   : p.startsWith('/admin/api/site') ? 'site' : null;
 
@@ -309,16 +314,23 @@ async function discordApi(method, apiPath, body) {
     return r.status === 204 ? {} : await r.json();
   } catch (e) { console.error('Discord API error:', e.message); return null; }
 }
-async function notifyApplicant(sub) {
-  if (!D.botToken) return;
-  if (sub.passed && D.guildId && D.passRoleId) await discordApi('PUT', `/guilds/${D.guildId}/members/${sub.discordId}/roles/${D.passRoleId}`);
-  const dm = await discordApi('POST', '/users/@me/channels', { recipient_id: sub.discordId });
-  if (!dm) return;
-  const mins = getConfig().retryMinutes;
-  await discordApi('POST', `/channels/${dm.id}/messages`, { content: sub.passed
-    ? `🎉 مبروك! اجتزت اختبار **HP1 Police Mod** بنسبة **${sub.percent}%**.\nسيتم مراجعة طلبك من الإدارة والتواصل معك قريباً.`
-    : `❌ للأسف لم تجتز اختبار **HP1 Police Mod** (نسبتك ${sub.percent}%).\nيمكنك إعادة الاختبار بعد ${mins} دقيقة.` });
+/* رتبة الناجح (تلقائي). الرسالة الخاصة ما تنرسل تلقائياً — تنرسل بزر الإشعار في روم النتائج */
+async function grantPassRole(sub) {
+  if (sub.passed && D.botToken && D.guildId && D.passRoleId) await discordApi('PUT', `/guilds/${D.guildId}/members/${sub.discordId}/roles/${D.passRoleId}`);
 }
+function renderMessage(tpl, sub) {
+  const cfg = getConfig();
+  const vars = { name: sub.name, mention: `<@${sub.discordId}>`, percent: sub.percent, correct: sub.correctCount, total: sub.total, pass_percent: cfg.passPercent, minutes: cfg.retryMinutes };
+  return String(tpl).replace(/\{(\w+)\}/g, (m, k) => (Object.prototype.hasOwnProperty.call(vars, k) ? String(vars[k]) : m)).slice(0, 2000);
+}
+async function sendNotice(sub) {
+  const cfg = getConfig();
+  const content = renderMessage(sub.passed ? cfg.passMessage : cfg.failMessage, sub);
+  const dm = await discordApi('POST', '/users/@me/channels', { recipient_id: sub.discordId });
+  if (!dm) return false;
+  return !!(await discordApi('POST', `/channels/${dm.id}/messages`, { content, allowed_mentions: { parse: [] } }));
+}
+const notifying = new Set();
 
 /* responses */
 const SEC_HEADERS = {
@@ -389,7 +401,8 @@ function remainingCooldown(discordId) {
 
 /* إرسال نتيجة الاختبار لروم الإدارة عن طريق البوت (إيمبد أخضر للناجح / أحمر للراسب) */
 async function postToDiscord(sub, avatar) {
-  if (!RESULTS_CHANNEL) return;
+  const channelId = getResultsChannel();
+  if (!channelId) return;
   const color = sub.passed ? 0x2ecc71 : 0xe74c3c;
   const chunks = []; let buf = '';
   sub.details.forEach((d, i) => {
@@ -412,9 +425,11 @@ async function postToDiscord(sub, avatar) {
     footer: { text: 'HP1 Police Mod | نظام الإدارة' }, timestamp: new Date(sub.at).toISOString(),
   };
   if (avatar && /^[\w]+$/.test(avatar)) main.thumbnail = { url: `https://cdn.discordapp.com/avatars/${sub.discordId}/${avatar}.png?size=128` };
-  const path_ = `/channels/${RESULTS_CHANNEL}/messages`;
+  const path_ = `/channels/${channelId}/messages`;
   const allowed = { allowed_mentions: { parse: [] } }; // بدون منشن فعلي (المنشن داخل الإيمبد يظهر بدون إزعاج)
-  await discordApi('POST', path_, { embeds: [main], ...allowed });
+  const button = { type: 2, style: sub.passed ? 3 : 4, custom_id: 'notify:' + sub.id,
+    label: sub.passed ? '📩 إرسال إشعار النجاح للعضو' : '📩 إرسال إشعار الرسوب للعضو' };
+  await discordApi('POST', path_, { embeds: [main], components: [{ type: 1, components: [button] }], ...allowed });
   for (let i = 0; i < chunks.length && i < 6; i++) {
     await discordApi('POST', path_, { embeds: [{ title: i === 0 ? 'تفاصيل الإجابات' : `تفاصيل الإجابات (${i + 1})`, description: chunks[i], color }], ...allowed });
   }
@@ -468,7 +483,7 @@ async function handleSubmit(req, res) {
   const all = getSubmissions(); all.push(sub);
   writeJSON(FILES.submissions, all.slice(-5000));
   postToDiscord(sub, user.avatar); // لا ننتظرهما
-  notifyApplicant(sub);
+  grantPassRole(sub);
 
   return json(res, 200, { correctCount, total, percent, passed });
 }
@@ -609,14 +624,30 @@ async function handleAdminApi(req, res, pathname, url) {
       catch (e) { return json(res, 400, { error: e.message }); }
     }
   }
+  if (pathname === '/admin/api/channels' && req.method === 'GET') {
+    const list = await discordApi('GET', `/guilds/${D.guildId}/channels`);
+    const channels = Array.isArray(list)
+      ? list.filter((c) => c.type === 0 || c.type === 5).sort((a, b) => a.position - b.position).map((c) => ({ id: c.id, name: c.name }))
+      : null; // null = تعذّر جلب الرومات
+    return json(res, 200, { channels });
+  }
   if (pathname === '/admin/api/config') {
     if (req.method === 'GET') return json(res, 200, getConfig());
     if (req.method === 'PUT') {
-      const b = await readBody(req, 4096);
+      const b = await readBody(req, 16384);
       const passPercent = Number(b.passPercent), retryMinutes = Number(b.retryMinutes);
       if (!Number.isInteger(passPercent) || passPercent < 1 || passPercent > 100) return json(res, 400, { error: 'نسبة النجاح من 1 إلى 100.' });
       if (!Number.isInteger(retryMinutes) || retryMinutes < 0 || retryMinutes > 10080) return json(res, 400, { error: 'مدة الانتظار من 0 إلى 10080 دقيقة.' });
-      writeJSON(FILES.config, { passPercent, retryMinutes });
+      const resultsChannelId = String(b.resultsChannelId || '').trim();
+      if (resultsChannelId) {
+        if (!/^\d{17,20}$/.test(resultsChannelId)) return json(res, 400, { error: 'أيدي الروم غير صالح.' });
+        const list = await discordApi('GET', `/guilds/${D.guildId}/channels`);
+        if (Array.isArray(list) && !list.some((c) => c.id === resultsChannelId && (c.type === 0 || c.type === 5))) return json(res, 400, { error: 'هذا الروم غير موجود في السيرفر أو ليس روم كتابي.' });
+      }
+      const passMessage = String(b.passMessage || '').trim() || DEFAULT_PASS_MSG;
+      const failMessage = String(b.failMessage || '').trim() || DEFAULT_FAIL_MSG;
+      if (passMessage.length > 1500 || failMessage.length > 1500) return json(res, 400, { error: 'الرسالة أطول من 1500 حرف.' });
+      writeJSON(FILES.config, { passPercent, retryMinutes, resultsChannelId, passMessage, failMessage });
       return json(res, 200, getConfig());
     }
   }
@@ -731,6 +762,22 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { latest: l ? { at: l.at, percent: l.percent, correctCount: l.correctCount, total: l.total, passed: l.passed } : null,
           attempts: mine.length, remainingMs: remainingCooldown(id) });
       }
+      if (pathname === '/internal/notify' && req.method === 'POST') {
+        const b = await readBody(req, 4096);
+        const sid = String(b.submissionId || ''), uid = String(b.userId || '');
+        if (!/^[\w-]{1,64}$/.test(sid) || !/^\d{17,20}$/.test(uid)) return json(res, 400, { error: 'bad_request' });
+        if (!(await tabAccess(uid)).subs) return json(res, 403, { error: 'forbidden' }); // نفس صلاحية خانة «نتائج المتقدمين» في اللوحة
+        const sub = getSubmissions().find((x) => x.id === sid);
+        if (!sub) return json(res, 404, { error: 'not_found' });
+        if (sub.notifiedAt || notifying.has(sid)) return json(res, 409, { error: 'already', by: sub.notifiedBy || null });
+        notifying.add(sid);
+        try {
+          if (!(await sendNotice(sub))) return json(res, 502, { error: 'dm_failed' });
+          const all = getSubmissions(); const i = all.findIndex((x) => x.id === sid); // نعيد القراءة (ممكن تكون تغيّرت أثناء الإرسال)
+          if (i >= 0) { all[i] = { ...all[i], notifiedAt: Date.now(), notifiedBy: uid }; writeJSON(FILES.submissions, all); }
+          return json(res, 200, { ok: true, passed: sub.passed });
+        } finally { notifying.delete(sid); }
+      }
       if (pathname === '/internal/reset' && req.method === 'POST') {
         const b = await readBody(req, 4096); const id = String(b.discordId || '');
         if (!/^\d{17,20}$/.test(id)) return json(res, 400, { error: 'أيدي غير صالح.' });
@@ -768,5 +815,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`✅ HP1 server يعمل على http://${HOST}:${PORT}   (لوحة التحكم: /admin)`);
-  if (!RESULTS_CHANNEL) console.log('ℹ️  DISCORD_RESULTS_CHANNEL_ID غير مضبوط — النتائج تُحفظ في اللوحة فقط ولا تُرسل لروم.');
+  if (!getResultsChannel()) console.log('ℹ️  روم النتائج غير محدد — حدده من اللوحة ← الإعدادات (أو DISCORD_RESULTS_CHANNEL_ID). النتائج تُحفظ في اللوحة فقط حالياً.');
 });

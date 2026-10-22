@@ -20,7 +20,7 @@ const path = require('path');
   }
 })();
 
-const { Client, GatewayIntentBits, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActivityType, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActivityType, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
@@ -36,8 +36,9 @@ async function site(method, url, body) {
     method, headers: { Authorization: 'Bearer ' + KEY, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(8000),
   });
-  if (!r.ok) throw new Error('site ' + r.status);
-  return r.json();
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error('site ' + r.status); e.status = r.status; e.data = data; throw e; }
+  return data;
 }
 const fmtMs = (ms) => `${Math.floor(ms / 60000)} دقيقة و${String(Math.ceil((ms % 60000) / 1000)).padStart(2, '0')} ثانية`;
 
@@ -57,7 +58,35 @@ client.once('ready', async () => {
   console.log(`✅ البوت شغّال: ${client.user.tag} — تم تسجيل الأوامر في ${guild.name}`);
 });
 
+/* زر «إرسال إشعار للعضو» تحت نتيجة المتقدم في روم النتائج */
+async function handleNotifyButton(i) {
+  await i.deferReply({ flags: MessageFlags.Ephemeral });
+  const doneRow = (label) => new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('done').setLabel(label).setStyle(ButtonStyle.Secondary).setDisabled(true));
+  try {
+    const r = await site('POST', '/internal/notify', { submissionId: i.customId.slice('notify:'.length), userId: i.user.id });
+    await i.message.edit({ components: [doneRow(`✅ تم إشعار العضو (${r.passed ? 'ناجح' : 'راسب'}) بواسطة ${i.user.displayName || i.user.username}`)] }).catch(() => {});
+    return i.editReply(`✅ تم إرسال إشعار ${r.passed ? 'النجاح' : 'الرسوب'} للعضو في الخاص.`);
+  } catch (e) {
+    if (e.status === 403) return i.editReply('⛔ ما عندك صلاحية (تحتاج الوصول لخانة «نتائج المتقدمين» في لوحة التحكم).');
+    if (e.status === 404) return i.editReply('⚠️ هذه النتيجة غير موجودة (ممكن انحذفت من اللوحة).');
+    if (e.status === 409) {
+      await i.message.edit({ components: [doneRow('✅ تم إشعار العضو مسبقاً')] }).catch(() => {});
+      return i.editReply('ℹ️ تم إرسال الإشعار لهذا العضو مسبقاً.');
+    }
+    if (e.status === 502) return i.editReply('⚠️ تعذر الإرسال — غالباً الخاص مقفل عند العضو أو ما هو في السيرفر. تقدر تكلمه يدوياً.');
+    throw e;
+  }
+}
+
 client.on('interactionCreate', async (i) => {
+  if (i.isButton() && i.customId.startsWith('notify:')) {
+    return handleNotifyButton(i).catch((e) => {
+      console.error(e);
+      const msg = '⚠️ تعذر الاتصال بالموقع، حاول لاحقاً.';
+      (i.deferred || i.replied ? i.editReply(msg) : i.reply({ content: msg, flags: MessageFlags.Ephemeral })).catch(() => {});
+    });
+  }
   if (!i.isChatInputCommand()) return;
   try {
     if (i.commandName === 'نتيجتي') {

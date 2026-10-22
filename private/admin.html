@@ -234,13 +234,26 @@ SAVERS.questions = {
 /* ---------- settings ---------- */
 async function loadSettings() {
   const c = await api('config'); const box = $('#settings'); box.replaceChildren();
+  let chs = null; try { chs = (await api('channels')).channels; } catch {}
   const pass = h('input', { type: 'number', min: 1, max: 100, value: c.passPercent });
   const retry = h('input', { type: 'number', min: 0, max: 10080, value: c.retryMinutes });
+  let chan;
+  if (chs) {
+    chan = h('select', {}, h('option', { value: '' }, '— بدون (حسب ملف .env إن وُجد) —'), chs.map(x => h('option', { value: x.id }, '# ' + x.name)));
+    chan.value = chs.some(x => x.id === c.resultsChannelId) ? c.resultsChannelId : '';
+  } else chan = h('input', { type: 'text', placeholder: 'أيدي الروم (Copy Channel ID)', value: c.resultsChannelId || '' });
+  const pm = h('textarea', { rows: 4, maxLength: 1500 }); pm.value = c.passMessage;
+  const fm = h('textarea', { rows: 4, maxLength: 1500 }); fm.value = c.failMessage;
+  const vars = h('div', { class: 'hint' }, 'المتغيرات: {name} الاسم · {mention} منشن العضو · {percent} النسبة · {correct} الإجابات الصحيحة · {total} عدد الأسئلة · {pass_percent} نسبة النجاح المطلوبة · {minutes} مدة الانتظار. اترك الخانة فاضية لرجوع النص الافتراضي.');
   box.append(h('div', { class: 'card' },
     h('label', { class: 'f' }, 'نسبة النجاح (%)'), pass, h('div', { class: 'hint' }, 'الحد الأدنى للنسبة المئوية لاجتياز الاختبار.'),
     h('label', { class: 'f' }, 'مدة الانتظار بعد الرسوب (بالدقائق)'), retry, h('div', { class: 'hint' }, 'اكتب 0 لإلغاء مدة الانتظار. تُطبَّق من السيرفر على أيدي الديسكورد.'),
+    h('label', { class: 'f' }, 'روم النتائج'), chan, h('div', { class: 'hint' }, 'الروم اللي يرسل فيه البوت نتيجة كل متقدم، وتحتها زر «إرسال إشعار للعضو». لازم البوت يشوفه وعنده View Channel + Send Messages + Embed Links.'),
+    h('label', { class: 'f' }, 'رسالة الإشعار — للناجح'), pm,
+    h('label', { class: 'f' }, 'رسالة الإشعار — للراسب'), fm, vars,
+    h('div', { class: 'hint' }, 'الرسالة ما تنرسل تلقائياً؛ تنرسل في خاص العضو لما تضغط الزر في روم النتائج.'),
     h('div', { style: 'margin-top:18px' }, h('button', { class: 'btn', onclick: async () => {
-      try { await api('config', 'PUT', { passPercent: +pass.value, retryMinutes: +retry.value }); toast('✅ تم حفظ الإعدادات'); }
+      try { await api('config', 'PUT', { passPercent: +pass.value, retryMinutes: +retry.value, resultsChannelId: chan.value.trim(), passMessage: pm.value, failMessage: fm.value }); toast('✅ تم حفظ الإعدادات'); }
       catch (e) { toast(e.message, true); }
     } }, 'حفظ الإعدادات'))));
 }
