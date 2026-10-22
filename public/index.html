@@ -1816,14 +1816,16 @@ async function finishQuiz(){
 
 loadQuiz();
 loadMe();
-/* شاشة HP1 الافتتاحية: تظهر مرة واحدة في كل جلسة متصفح */
+/* شاشة HP1 الافتتاحية: تظهر عند كل دخول أو تحديث للصفحة */
 (function(){
   const splash=document.getElementById("hp1Intro");
-  let seen=false;
-  try{seen=sessionStorage.getItem("hp1IntroSeen")==="1";if(!seen)sessionStorage.setItem("hp1IntroSeen","1")}catch(e){}
-  const close=()=>{if(!splash)return;document.body.classList.remove("intro-active");splash.classList.add("hide");setTimeout(()=>splash.remove(),850)};
-  if(seen){close();return}
-  setTimeout(close,2300);
+  const close=()=>{
+    if(!splash)return;
+    document.body.classList.remove("intro-active");
+    splash.classList.add("hide");
+    setTimeout(()=>splash.remove(),850);
+  };
+  setTimeout(close,2600);
 })();
 </script>
 </body>
