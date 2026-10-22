@@ -100,7 +100,8 @@ client.on('interactionCreate', async (i) => {
           { name: 'الحالة', value: l.passed ? '✅ ناجح' : '❌ راسب', inline: true },
           { name: 'عدد المحاولات', value: String(d.attempts), inline: true },
         ).setTimestamp(l.at);
-      if (!l.passed && d.remainingMs > 0) e.setFooter({ text: `إعادة الاختبار بعد: ${fmtMs(d.remainingMs)}` });
+      if (d.locked) e.setFooter({ text: 'إعادة الاختبار غير متاحة (اجتزت الاختبار)' });
+      else if (d.remainingMs > 0) e.setFooter({ text: `إعادة الاختبار بعد: ${fmtMs(d.remainingMs)}` });
       return i.editReply({ embeds: [e] });
     }
     if (i.commandName === 'فك-الانتظار') {

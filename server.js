@@ -81,7 +81,7 @@ const getQuestions = () => readJSON(FILES.questions, []);
 /* نصوص الإشعار الافتراضية — المتغيرات: {name} {mention} {percent} {correct} {total} {pass_percent} {minutes} */
 const DEFAULT_PASS_MSG = '🎉 مبروك! اجتزت اختبار **HP1 Police Mod** بنسبة **{percent}%**.\nسيتم مراجعة طلبك من الإدارة والتواصل معك قريباً.';
 const DEFAULT_FAIL_MSG = '❌ للأسف لم تجتز اختبار **HP1 Police Mod** (نسبتك {percent}%).\nيمكنك إعادة الاختبار بعد {minutes} دقيقة.';
-const getConfig = () => ({ passPercent: 60, retryMinutes: 60, resultsChannelId: '', passMessage: DEFAULT_PASS_MSG, failMessage: DEFAULT_FAIL_MSG, ...readJSON(FILES.config, {}) });
+const getConfig = () => ({ passPercent: 60, retryMinutes: 60, passRetryMode: 'allow', passRetryMinutes: 0, resultsChannelId: '', passMessage: DEFAULT_PASS_MSG, failMessage: DEFAULT_FAIL_MSG, ...readJSON(FILES.config, {}) });
 /* روم النتائج: من الإعدادات في اللوحة، وإن ما انضبط يُستخدم DISCORD_RESULTS_CHANNEL_ID من .env */
 const getResultsChannel = () => { const c = getConfig().resultsChannelId; return /^\d{17,20}$/.test(c || '') ? c : RESULTS_CHANNEL; };
 const getSubmissions = () => readJSON(FILES.submissions, []);
@@ -96,7 +96,7 @@ const getAdminRoleIds = () => {
 };
 
 /* ---- خانات اللوحة + صلاحية كل خانة (يحددها المالك) ---- */
-const TABS = ['questions', 'settings', 'subs', 'site'];
+const TABS = ['questions', 'settings', 'subs', 'site', 'design'];
 // perms.json: { [tab]: [roleIds] }  — الخانة بدون قيد = كل من يدخل اللوحة
 const getPerms = () => {
   const p = readJSON(FILES.perms, {});
@@ -108,7 +108,8 @@ const tabForPath = (p) =>
   p === '/admin/api/questions' ? 'questions'
   : p === '/admin/api/config' || p === '/admin/api/channels' ? 'settings'
   : p === '/admin/api/submissions' || p.startsWith('/admin/api/submissions/') || p === '/admin/api/cooldown/reset' ? 'subs'
-  : p.startsWith('/admin/api/site') ? 'site' : null;
+  : p.startsWith('/admin/api/site') ? 'site'
+  : p.startsWith('/admin/api/design') ? 'design' : null;
 
 /* رولات العضو من ديسكورد عبر البوت (كاش قصير) */
 const memberCache = new Map();
@@ -142,7 +143,8 @@ async function tabAccess(userId) {
 const getSite = () => {
   const s = readJSON(FILES.site, {});
   return { rules: Array.isArray(s.rules) ? s.rules : [], contacts: Array.isArray(s.contacts) ? s.contacts : [],
-    staff: Array.isArray(s.staff) ? s.staff : [], quizIntro: s.quizIntro && typeof s.quizIntro === 'object' ? s.quizIntro : null };
+    staff: Array.isArray(s.staff) ? s.staff : [], quizIntro: s.quizIntro && typeof s.quizIntro === 'object' ? s.quizIntro : null,
+    design: s.design && typeof s.design === 'object' ? s.design : null };
 };
 const IMG_RE = /^\/(?:uploads\/)?[\w.-]{1,80}\.(?:png|jpe?g|webp|gif)$/i;
 const str = (v, max, what) => {
@@ -206,10 +208,31 @@ function validateQuizIntro(b) {
   return { title: str(b.title, 100, 'العنوان'), paragraphs, startMessage: str(b.startMessage, 120, 'رسالة البداية'),
     agreeText: str(b.agreeText, 150, 'نص الموافقة'), durationMinutes };
 }
+/* تصميم الموقع: شعار + خلفية + ألوان (القيم الفارغة = الافتراضي) */
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+const DESIGN_COLORS = ['gold', 'goldLt', 'goldDk', 'ink', 'ink2', 'panel', 'txt', 'muted'];
+function validateDesign(b) {
+  b = b && typeof b === 'object' ? b : {};
+  const logo = str(b.logo, 120, 'الشعار');
+  if (logo && !IMG_RE.test(logo)) throw new Error('صورة الشعار غير صالحة.');
+  const background = str(b.background, 120, 'الخلفية');
+  if (background && !IMG_RE.test(background)) throw new Error('صورة الخلفية غير صالحة.');
+  const colors = {};
+  for (const k of DESIGN_COLORS) {
+    const v = str(b.colors && b.colors[k], 7, 'اللون');
+    if (!v) continue;
+    if (!HEX_RE.test(v)) throw new Error('لون غير صالح (لازم يكون مثل #d4ae56).');
+    colors[k] = v.toLowerCase();
+  }
+  const op = Number(b.bgOpacity);
+  const bgOpacity = Number.isFinite(op) ? Math.min(100, Math.max(0, Math.round(op))) : 28;
+  return { logo, background, bgOpacity, colors };
+}
 /* يحذف الصور اللي ما عاد أحد يستخدمها (مع مهلة ساعة عشان الصور المرفوعة وما انحفظت بعد) */
 function pruneUploads() {
   const site = getSite();
-  const imgs = [...site.contacts.map((c) => c.image), ...site.staff.flatMap((t) => (t.members || []).map((m) => m.image))];
+  const imgs = [...site.contacts.map((c) => c.image), ...site.staff.flatMap((t) => (t.members || []).map((m) => m.image)),
+    site.design && site.design.logo, site.design && site.design.background];
   const keep = new Set(imgs.filter((x) => typeof x === 'string' && x.startsWith('/uploads/')).map((x) => x.slice(9)));
   try {
     for (const f of fs.readdirSync(UPLOAD_DIR)) {
@@ -391,13 +414,22 @@ function serveStatic(req, res, pathname, baseDir = PUBLIC_DIR) {
 }
 
 /* ---------------------------- quiz logic ---------------------------- */
-function remainingCooldown(discordId) {
-  const { retryMinutes } = getConfig();
-  const ms = retryMinutes * 60_000;
-  let last = 0;
-  for (const s of getSubmissions()) if (s.discordId === discordId && !s.passed && !s.cooldownCleared && s.at > last) last = s.at;
-  return Math.max(0, last + ms - Date.now());
+function cooldownState(discordId) {
+  const cfg = getConfig();
+  let lastFail = 0, lastPass = 0;
+  for (const s of getSubmissions()) {
+    if (s.discordId !== discordId || s.cooldownCleared) continue;
+    if (s.passed) { if (s.at > lastPass) lastPass = s.at; } else if (s.at > lastFail) lastFail = s.at;
+  }
+  let remainingMs = Math.max(0, lastFail + cfg.retryMinutes * 60_000 - Date.now());
+  let locked = false;
+  if (lastPass) {
+    if (cfg.passRetryMode === 'never') locked = true; // نجح ولا يقدر يعيد
+    else remainingMs = Math.max(remainingMs, lastPass + cfg.passRetryMinutes * 60_000 - Date.now());
+  }
+  return { remainingMs, locked };
 }
+const remainingCooldown = (discordId) => cooldownState(discordId).remainingMs;
 
 /* إرسال نتيجة الاختبار لروم الإدارة عن طريق البوت (إيمبد أخضر للناجح / أحمر للراسب) */
 async function postToDiscord(sub, avatar) {
@@ -438,7 +470,7 @@ async function postToDiscord(sub, avatar) {
 function clearCooldown(id) {
   let cleared = 0;
   const all = getSubmissions().map((x) => {
-    if (x.discordId === id && !x.passed && !x.cooldownCleared) { cleared++; return { ...x, cooldownCleared: true }; }
+    if (x.discordId === id && !x.cooldownCleared) { cleared++; return { ...x, cooldownCleared: true }; }
     return x;
   });
   writeJSON(FILES.submissions, all);
@@ -460,8 +492,9 @@ async function handleSubmit(req, res) {
   if (!Number.isInteger(age) || age < 10 || age > 99) return json(res, 400, { error: 'العمر غير صالح.' });
   if (!Array.isArray(body.answers) || body.answers.length > 200) return json(res, 400, { error: 'إجابات غير صالحة.' });
 
-  const left = remainingCooldown(discordId);
-  if (left > 0) return json(res, 429, { error: 'إعادة الاختبار غير متاحة الآن.', remainingMs: left });
+  const cs = cooldownState(discordId);
+  if (cs.locked) return json(res, 403, { error: 'اجتزت الاختبار مسبقاً ولا يمكنك إعادته.', locked: true });
+  if (cs.remainingMs > 0) return json(res, 429, { error: 'إعادة الاختبار غير متاحة الآن.', remainingMs: cs.remainingMs });
 
   const questions = getQuestions();
   if (!questions.length) return json(res, 503, { error: 'لا توجد أسئلة.' });
@@ -599,7 +632,7 @@ async function handleAdminApi(req, res, pathname, url) {
     try { const quizIntro = validateQuizIntro(b); writeJSON(FILES.site, { ...getSite(), quizIntro }); return json(res, 200, { quizIntro }); }
     catch (e) { return json(res, 400, { error: e.message }); }
   }
-  if (pathname === '/admin/api/site/upload' && req.method === 'POST') {
+  if ((pathname === '/admin/api/site/upload' || pathname === '/admin/api/design/upload') && req.method === 'POST') {
     const b = await readBody(req, 3 * 1024 * 1024);
     const m = /^data:image\/[\w+.-]+;base64,([A-Za-z0-9+/=]+)$/.exec(String(b.data || ''));
     if (!m) return json(res, 400, { error: 'ملف الصورة غير صالح.' });
@@ -611,6 +644,18 @@ async function handleAdminApi(req, res, pathname, url) {
     const name = crypto.randomBytes(8).toString('hex') + '.' + type.ext;
     fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
     return json(res, 200, { url: '/uploads/' + name });
+  }
+
+  /* ---- تصميم الموقع ---- */
+  if (pathname === '/admin/api/design' && req.method === 'GET') return json(res, 200, { design: getSite().design });
+  if (pathname === '/admin/api/design' && req.method === 'PUT') {
+    const b = await readBody(req, 16 * 1024);
+    try {
+      const design = validateDesign(b);
+      writeJSON(FILES.site, { ...getSite(), design });
+      pruneUploads();
+      return json(res, 200, { design });
+    } catch (e) { return json(res, 400, { error: e.message }); }
   }
 
   if (pathname === '/admin/api/logout' && req.method === 'POST') {
@@ -638,6 +683,9 @@ async function handleAdminApi(req, res, pathname, url) {
       const passPercent = Number(b.passPercent), retryMinutes = Number(b.retryMinutes);
       if (!Number.isInteger(passPercent) || passPercent < 1 || passPercent > 100) return json(res, 400, { error: 'نسبة النجاح من 1 إلى 100.' });
       if (!Number.isInteger(retryMinutes) || retryMinutes < 0 || retryMinutes > 10080) return json(res, 400, { error: 'مدة الانتظار من 0 إلى 10080 دقيقة.' });
+      const passRetryMode = b.passRetryMode === 'never' ? 'never' : 'allow';
+      const passRetryMinutes = Number(b.passRetryMinutes || 0);
+      if (!Number.isInteger(passRetryMinutes) || passRetryMinutes < 0 || passRetryMinutes > 525600) return json(res, 400, { error: 'مدة إعادة الناجح من 0 إلى 525600 دقيقة.' });
       const resultsChannelId = String(b.resultsChannelId || '').trim();
       if (resultsChannelId) {
         if (!/^\d{17,20}$/.test(resultsChannelId)) return json(res, 400, { error: 'أيدي الروم غير صالح.' });
@@ -647,7 +695,7 @@ async function handleAdminApi(req, res, pathname, url) {
       const passMessage = String(b.passMessage || '').trim() || DEFAULT_PASS_MSG;
       const failMessage = String(b.failMessage || '').trim() || DEFAULT_FAIL_MSG;
       if (passMessage.length > 1500 || failMessage.length > 1500) return json(res, 400, { error: 'الرسالة أطول من 1500 حرف.' });
-      writeJSON(FILES.config, { passPercent, retryMinutes, resultsChannelId, passMessage, failMessage });
+      writeJSON(FILES.config, { passPercent, retryMinutes, passRetryMode, passRetryMinutes, resultsChannelId, passMessage, failMessage });
       return json(res, 200, getConfig());
     }
   }
@@ -760,7 +808,7 @@ const server = http.createServer(async (req, res) => {
         const mine = getSubmissions().filter((x) => x.discordId === id);
         const l = mine[mine.length - 1];
         return json(res, 200, { latest: l ? { at: l.at, percent: l.percent, correctCount: l.correctCount, total: l.total, passed: l.passed } : null,
-          attempts: mine.length, remainingMs: remainingCooldown(id) });
+          attempts: mine.length, remainingMs: cooldownState(id).remainingMs, locked: cooldownState(id).locked });
       }
       if (pathname === '/internal/notify' && req.method === 'POST') {
         const b = await readBody(req, 4096);
@@ -797,7 +845,22 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/site' && req.method === 'GET') return json(res, 200, getSite(), { 'Cache-Control': 'no-cache' });
     if (pathname === '/api/cooldown' && req.method === 'GET') {
       const u = readUser(req);
-      return json(res, 200, { remainingMs: u ? remainingCooldown(u.id) : 0 });
+      return json(res, 200, u ? cooldownState(u.id) : { remainingMs: 0, locked: false });
+    }
+    if (pathname === '/api/profile' && req.method === 'GET') {
+      const u = readUser(req);
+      if (!u) return json(res, 401, { error: 'سجّل الدخول أولاً.' });
+      const mine = getSubmissions().filter((x) => x.discordId === u.id);
+      const l = mine[mine.length - 1];
+      const cs = cooldownState(u.id);
+      const cfg = getConfig();
+      return json(res, 200, {
+        attempts: mine.length,
+        passedCount: mine.filter((x) => x.passed).length,
+        bestPercent: mine.length ? Math.max(...mine.map((x) => x.percent)) : null,
+        latest: l ? { at: l.at, percent: l.percent, correctCount: l.correctCount, total: l.total, passed: l.passed, name: l.name } : null,
+        passPercent: cfg.passPercent, remainingMs: cs.remainingMs, locked: cs.locked,
+      }, { 'Cache-Control': 'no-store' });
     }
     if (pathname === '/api/submit' && req.method === 'POST') return await handleSubmit(req, res);
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'غير موجود.' });

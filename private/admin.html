@@ -67,6 +67,23 @@ label.f{display:block;color:var(--gold);font-weight:700;margin:14px 0 6px}
 .permgrid label{display:flex;align-items:center;gap:8px;cursor:pointer;padding:6px 8px;border-radius:8px;border:1px solid transparent}
 .permgrid label:hover{border-color:var(--line)}
 .permgrid input{accent-color:var(--gold);width:17px;height:17px}
+.cgrid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));margin-top:12px}
+.citem{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:#0f0b04}
+.citem input[type=color]{width:46px;height:38px;padding:0;border:1px solid var(--line);border-radius:8px;background:transparent;cursor:pointer;flex:none}
+.citem b{display:block;font-size:14px}.citem small{color:var(--muted);font-size:12px}.citem code{margin-inline-start:auto;direction:ltr;color:var(--muted);font-size:12px}
+.dpic{width:96px;height:96px;border-radius:50%;object-fit:cover;background:#0f0b04;border:2px solid var(--gold);display:grid;place-items:center;color:var(--gold);font-size:30px;overflow:hidden;flex:none}
+.dpic img{width:100%;height:100%;object-fit:cover}
+.dbg{width:200px;height:112px;border-radius:12px;border:1px solid var(--line);background:#0f0b04 center/cover no-repeat;flex:none;display:grid;place-items:center;color:var(--gold);font-size:28px}
+.dline{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.dline .fields{flex:1;min-width:200px;display:grid;gap:8px}
+input[type=range]{width:100%;accent-color:var(--gold)}
+.prev{border-radius:16px;border:1px solid var(--line);overflow:hidden;position:relative;margin-top:12px;min-height:190px}
+.prev .pbg{position:absolute;inset:0;background-size:cover;background-position:center}
+.prev .pin{position:relative;padding:16px}
+.prev .ph{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:14px}
+.prev .ph img{width:38px;height:38px;border-radius:50%;object-fit:cover}
+.prev .pbtn{display:inline-block;padding:8px 18px;border-radius:99px;font-weight:800;margin-top:12px;border:0}
+.prev .pcard{margin-top:12px;padding:12px 14px;border-radius:14px}
 .lockcard{text-align:center;padding:50px 20px;color:var(--muted)}
 .lockcard b{display:block;font-size:42px;margin-bottom:8px}
 @media(max-width:600px){.contact-card{flex-direction:column;align-items:stretch}.contact-card .pic{align-self:center}}
@@ -75,7 +92,7 @@ label.f{display:block;color:var(--gold);font-weight:700;margin:14px 0 6px}
 <body>
 <header>
   <h1 style="display:flex;align-items:center;gap:10px"><img src="/logo.png" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover"> لوحة تحكم Top Store</h1>
-  <div style="display:flex;gap:8px"><a class="btn sec sm" href="/" target="_blank" style="text-decoration:none">عرض الموقع</a><button class="btn sec sm" id="logout">تسجيل خروج</button></div>
+  <div style="display:flex;gap:8px"><a class="btn sec sm" id="backSite" href="/" style="text-decoration:none">← الرجوع للموقع</a><button class="btn sec sm" id="logout">تسجيل خروج</button></div>
 </header>
 <main>
   <div class="tabs" id="tabs"></div>
@@ -83,6 +100,7 @@ label.f{display:block;color:var(--gold);font-weight:700;margin:14px 0 6px}
   <div class="pane" id="pane-settings" hidden><section id="settings"></section><div class="permslot" data-tab="settings"></div></div>
   <div class="pane" id="pane-subs" hidden><section id="subs"></section><div class="permslot" data-tab="subs"></div></div>
   <div class="pane" id="pane-site" hidden><section id="site"></section><div class="permslot" data-tab="site"></div></div>
+  <div class="pane" id="pane-design" hidden><section id="design"></section><div class="permslot" data-tab="design"></div></div>
   <div class="pane" id="pane-owner" hidden><section id="owner"></section></div>
 </main>
 <div class="savebar" id="savebar" hidden>
@@ -123,12 +141,12 @@ function toast(msg, err) {
 const fmtDate = (ms) => new Date(ms).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' });
 
 /* ---------- tabs / dirty / lock ---------- */
-const TAB_LABELS = { questions: 'الأسئلة', settings: 'الإعدادات', subs: 'نتائج المتقدمين', site: '⚙️ إعدادات الموقع', owner: '🔒 إعدادات خاصة' };
-const TAB_ORDER = ['questions', 'settings', 'subs', 'site', 'owner'];
+const TAB_LABELS = { questions: 'الأسئلة', settings: 'الإعدادات', subs: 'نتائج المتقدمين', site: '⚙️ إعدادات الموقع', design: '🎨 تصميم الموقع', owner: '🔒 إعدادات خاصة' };
+const TAB_ORDER = ['questions', 'settings', 'subs', 'site', 'design', 'owner'];
 let ME = { isOwner: false, tabs: {} }, curTab = 'questions', siteSub = 'rules';
 const access = (t) => t === 'owner' || !ME.tabs || ME.tabs[t] !== false;
 const DIRTY = {}, SAVERS = {};
-const barKey = () => curTab === 'questions' ? 'questions' : curTab === 'site' ? siteSub : null;
+const barKey = () => curTab === 'questions' ? 'questions' : curTab === 'site' ? siteSub : curTab === 'design' ? 'design' : null;
 function setDirty(k, v) { DIRTY[k] = v; refreshBar(); }
 function refreshBar() { const k = barKey(); $('#savebar').hidden = !(k && DIRTY[k]); }
 $('#saveBtn').addEventListener('click', () => { const k = barKey(); if (k && SAVERS[k]) SAVERS[k].save(); });
@@ -157,8 +175,15 @@ function showTab(t) {
   if (t === 'subs') loadSubs();
   if (t === 'owner') loadOwner();
   if (t === 'site') loadSite();
+  if (t === 'design') loadDesign();
   renderPerm(t);
 }
+$('#backSite').addEventListener('click', (e) => {
+  // رجوع لنفس صفحة الموقع اللي جيت منها بدل ما يفتح الموقع من جديد
+  try {
+    if (document.referrer && new URL(document.referrer).origin === location.origin && !document.referrer.includes('/admin') && history.length > 1) { e.preventDefault(); history.back(); }
+  } catch {}
+});
 $('#logout').addEventListener('click', async () => { try { await api('logout', 'POST'); } finally { location.href = '/admin'; } });
 
 /* ---------- صلاحيات الخانة (تظهر للمالك فقط، تحت كل خانة) ---------- */
@@ -237,6 +262,11 @@ async function loadSettings() {
   let chs = null; try { chs = (await api('channels')).channels; } catch {}
   const pass = h('input', { type: 'number', min: 1, max: 100, value: c.passPercent });
   const retry = h('input', { type: 'number', min: 0, max: 10080, value: c.retryMinutes });
+  const prm = h('select', {}, h('option', { value: 'allow' }, 'يقدر يعيد الاختبار'), h('option', { value: 'never' }, 'ما يقدر يعيد (خلاص)'));
+  prm.value = c.passRetryMode === 'never' ? 'never' : 'allow';
+  const prmin = h('input', { type: 'number', min: 0, max: 525600, value: c.passRetryMinutes || 0 });
+  const syncPr = () => { prmin.disabled = prm.value === 'never'; prmin.style.opacity = prmin.disabled ? .4 : 1; };
+  prm.onchange = syncPr; syncPr();
   let chan;
   if (chs) {
     chan = h('select', {}, h('option', { value: '' }, '— بدون (حسب ملف .env إن وُجد) —'), chs.map(x => h('option', { value: x.id }, '# ' + x.name)));
@@ -248,12 +278,14 @@ async function loadSettings() {
   box.append(h('div', { class: 'card' },
     h('label', { class: 'f' }, 'نسبة النجاح (%)'), pass, h('div', { class: 'hint' }, 'الحد الأدنى للنسبة المئوية لاجتياز الاختبار.'),
     h('label', { class: 'f' }, 'مدة الانتظار بعد الرسوب (بالدقائق)'), retry, h('div', { class: 'hint' }, 'اكتب 0 لإلغاء مدة الانتظار. تُطبَّق من السيرفر على أيدي الديسكورد.'),
+    h('label', { class: 'f' }, 'بعد النجاح: هل يقدر يعيد الاختبار؟'), prm,
+    h('label', { class: 'f' }, 'مدة الانتظار بعد النجاح قبل ما يعيد (بالدقائق)'), prmin, h('div', { class: 'hint' }, 'تنطبق فقط لو اخترت «يقدر يعيد». اكتب 0 ليعيد مباشرة. مثال: 1440 = يوم، 10080 = أسبوع. الإدارة تقدر تفك القفل عن أي عضو من بوت «/فك-الانتظار» أو من النتائج.'),
     h('label', { class: 'f' }, 'روم النتائج'), chan, h('div', { class: 'hint' }, 'الروم اللي يرسل فيه البوت نتيجة كل متقدم، وتحتها زر «إرسال إشعار للعضو». لازم البوت يشوفه وعنده View Channel + Send Messages + Embed Links.'),
     h('label', { class: 'f' }, 'رسالة الإشعار — للناجح'), pm,
     h('label', { class: 'f' }, 'رسالة الإشعار — للراسب'), fm, vars,
     h('div', { class: 'hint' }, 'الرسالة ما تنرسل تلقائياً؛ تنرسل في خاص العضو لما تضغط الزر في روم النتائج.'),
     h('div', { style: 'margin-top:18px' }, h('button', { class: 'btn', onclick: async () => {
-      try { await api('config', 'PUT', { passPercent: +pass.value, retryMinutes: +retry.value, resultsChannelId: chan.value.trim(), passMessage: pm.value, failMessage: fm.value }); toast('✅ تم حفظ الإعدادات'); }
+      try { await api('config', 'PUT', { passPercent: +pass.value, retryMinutes: +retry.value, passRetryMode: prm.value, passRetryMinutes: +prmin.value || 0, resultsChannelId: chan.value.trim(), passMessage: pm.value, failMessage: fm.value }); toast('✅ تم حفظ الإعدادات'); }
       catch (e) { toast(e.message, true); }
     } }, 'حفظ الإعدادات'))));
 }
@@ -400,7 +432,7 @@ SAVERS.rules = {
 
 /* تواصل معنا */
 const cDirty = () => setDirty('contacts', JSON.stringify(C) !== CS);
-function fileToImageDataUrl(file) { // يصغّر الصورة لـ 512px كحد أقصى
+function fileToImageDataUrl(file, max = 512, mime = 'image/png') { // يصغّر الصورة (512px افتراضياً)
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onerror = () => reject(new Error('تعذّر قراءة الملف'));
@@ -408,10 +440,10 @@ function fileToImageDataUrl(file) { // يصغّر الصورة لـ 512px كحد
       const img = new Image();
       img.onerror = () => reject(new Error('الملف ليس صورة صالحة'));
       img.onload = () => {
-        const k = Math.min(1, 512 / Math.max(img.width, img.height));
+        const k = Math.min(1, max / Math.max(img.width, img.height));
         const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(img.width * k)); cv.height = Math.max(1, Math.round(img.height * k));
         cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-        resolve(cv.toDataURL('image/png'));
+        resolve(cv.toDataURL(mime, 0.85));
       };
       img.src = fr.result;
     };
@@ -544,6 +576,94 @@ SAVERS.staff = {
   discard() { ST = JSON.parse(STS); if (SC >= ST.length) SC = 0; sDirty(); renderSite(); },
 };
 
+/* ---------- تصميم الموقع: الشعار + الخلفية + الألوان ---------- */
+const DG_DEFAULT = { logo: '', background: '', bgOpacity: 28, colors: { gold: '#d4ae56', goldLt: '#f7e6bb', goldDk: '#8a6e2e', ink: '#0a0803', ink2: '#120e05', panel: '#171205', txt: '#f3ecdd', muted: '#a89f8b' } };
+const DG_LABELS = { gold: ['اللون الرئيسي', 'الأزرار والحدود'], goldLt: ['اللون الفاتح', 'العناوين والنصوص المميزة'], goldDk: ['اللون الغامق', 'التدرجات والظلال'],
+  ink: ['لون الخلفية', 'خلف كل الصفحة'], ink2: ['خلفية ثانوية', 'أقسام الصفحة'], panel: ['لون البطاقات', 'البطاقات والصناديق'], txt: ['لون النص', 'النص العادي'], muted: ['النص الخافت', 'الوصف والملاحظات'] };
+let DG = null, DGS = '';
+const dgDirty = () => setDirty('design', JSON.stringify(DG) !== DGS);
+const dgNorm = (d) => { d = d || {}; return { logo: d.logo || '', background: d.background || '', bgOpacity: Number.isFinite(d.bgOpacity) ? d.bgOpacity : DG_DEFAULT.bgOpacity, colors: { ...DG_DEFAULT.colors, ...(d.colors || {}) } }; };
+async function loadDesign() {
+  if (DIRTY.design && DG) { renderDesign(); return; }
+  try { const d = await api('design'); DG = dgNorm(d.design); DGS = JSON.stringify(DG); renderDesign(); }
+  catch (e) { toast(e.message, true); }
+}
+function dgUpload(key, max, mime) {
+  return h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', hidden: true, onchange: async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const data = await fileToImageDataUrl(f, max, mime);
+      const r = await api('design/upload', 'POST', { data });
+      DG[key] = r.url; dgDirty(); renderDesign(); toast('✅ تم رفع الصورة — لا تنسى «حفظ»');
+    } catch (err) { toast(err.message, true); }
+  } });
+}
+const hexRgb = (x) => [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16)).join(',');
+function renderDesign() {
+  const box = $('#design'); box.replaceChildren();
+  const c = DG.colors, logoSrc = DG.logo || '/logo.png', bgSrc = DG.background || '/background.png';
+  const logoFile = dgUpload('logo', 512, 'image/png'), bgFile = dgUpload('background', 1920, 'image/jpeg');
+
+  box.append(h('div', { class: 'card' },
+    h('div', { class: 'qhead' }, h('span', {}, '🖼️ شعار الموقع')),
+    h('div', { class: 'dline' },
+      h('div', { class: 'dpic' }, h('img', { src: logoSrc, alt: '' })),
+      h('div', { class: 'fields' },
+        h('div', { class: 'hint' }, 'يظهر في أعلى الموقع وفي الصفحة الرئيسية وفي أيقونة التبويب. الأفضل صورة مربعة (PNG شفاف).'),
+        h('div', { class: 'row', style: 'margin:0' },
+          h('button', { class: 'btn sm', onclick: () => logoFile.click() }, 'رفع شعار جديد'), logoFile,
+          DG.logo ? h('button', { class: 'btn danger sm', onclick: () => { DG.logo = ''; dgDirty(); renderDesign(); } }, 'الرجوع للشعار الأصلي') : null)))));
+
+  box.append(h('div', { class: 'card' },
+    h('div', { class: 'qhead' }, h('span', {}, '🌄 خلفية الموقع')),
+    h('div', { class: 'dline' },
+      h('div', { class: 'dbg', style: `background-image:url("${bgSrc}")` }),
+      h('div', { class: 'fields' },
+        h('div', { class: 'hint' }, 'صورة تظهر خلف كل الصفحات. يفضّل صورة عرضية بدقة عالية (تُصغَّر تلقائياً إلى 1920px).'),
+        h('div', { class: 'row', style: 'margin:0' },
+          h('button', { class: 'btn sm', onclick: () => bgFile.click() }, 'رفع خلفية جديدة'), bgFile,
+          DG.background ? h('button', { class: 'btn danger sm', onclick: () => { DG.background = ''; dgDirty(); renderDesign(); } }, 'الرجوع للخلفية الأصلية') : null),
+        h('label', { class: 'f', style: 'margin:6px 0 0' }, `وضوح الخلفية: ${DG.bgOpacity}%`),
+        h('input', { type: 'range', min: 0, max: 100, value: DG.bgOpacity, oninput: (e) => { DG.bgOpacity = +e.target.value; e.target.previousSibling.textContent = `وضوح الخلفية: ${DG.bgOpacity}%`; dgDirty(); paintPrev(); } })))));
+
+  const grid = h('div', { class: 'cgrid' });
+  Object.keys(DG_DEFAULT.colors).forEach(k => {
+    const code = h('code', {}, c[k]);
+    grid.append(h('label', { class: 'citem' },
+      h('input', { type: 'color', value: c[k], oninput: (e) => { c[k] = e.target.value; code.textContent = c[k]; dgDirty(); paintPrev(); } }),
+      h('span', {}, h('b', {}, DG_LABELS[k][0]), h('small', {}, DG_LABELS[k][1])), code));
+  });
+  box.append(h('div', { class: 'card' },
+    h('div', { class: 'qhead' }, h('span', {}, '🎨 ألوان الموقع'),
+      h('button', { class: 'btn sec sm', onclick: () => { DG.colors = { ...DG_DEFAULT.colors }; dgDirty(); renderDesign(); } }, 'إرجاع الألوان الأصلية')),
+    h('div', { class: 'hint' }, 'غيّر أي لون وشوف المعاينة تتغير مباشرة، وبعدها اضغط «حفظ».'),
+    grid));
+
+  const prev = h('div', { class: 'prev', id: 'prev' },
+    h('div', { class: 'pbg' }),
+    h('div', { class: 'pin' },
+      h('div', { class: 'ph' }, h('img', { src: logoSrc, alt: '' }), h('b', { class: 'pt' }, 'اسم الموقع')),
+      h('div', { class: 'pcard' }, h('b', { class: 'pl' }, 'عنوان مميز'), h('div', { class: 'pm' }, 'هذا نص تجريبي لمعاينة الألوان.'), h('div', { class: 'ptx' }, 'نص عادي داخل البطاقة.')),
+      h('span', { class: 'pbtn' }, 'زر تجريبي')));
+  box.append(h('div', { class: 'card' }, h('div', { class: 'qhead' }, h('span', {}, '👁️ معاينة')), prev));
+  paintPrev();
+}
+function paintPrev() {
+  const pv = $('#prev'); if (!pv || !DG) return;
+  const c = DG.colors;
+  pv.style.background = c.ink; pv.style.borderColor = `rgba(${hexRgb(c.gold)},.45)`;
+  const bg = $('.pbg', pv); bg.style.backgroundImage = `url("${DG.background || '/background.png'}")`; bg.style.opacity = DG.bgOpacity / 100;
+  const ph = $('.ph', pv); ph.style.background = c.panel; ph.style.border = `1px solid rgba(${hexRgb(c.gold)},.45)`;
+  $('.pt', pv).style.color = c.goldLt;
+  const card = $('.pcard', pv); card.style.background = c.panel; card.style.border = `1px solid rgba(${hexRgb(c.gold)},.3)`; card.style.borderRight = `4px solid ${c.gold}`;
+  $('.pl', pv).style.color = c.goldLt; $('.pm', pv).style.color = c.muted; $('.ptx', pv).style.color = c.txt;
+  const b = $('.pbtn', pv); b.style.background = `linear-gradient(135deg,${c.goldLt},${c.gold})`; b.style.color = '#140f04';
+}
+SAVERS.design = {
+  async save() { try { const r = await api('design', 'PUT', DG); DG = dgNorm(r.design); DGS = JSON.stringify(DG); dgDirty(); renderDesign(); toast('✅ تم حفظ تصميم الموقع'); } catch (e) { toast(e.message, true); } },
+  discard() { DG = JSON.parse(DGS); dgDirty(); renderDesign(); },
+};
+
 /* ---------- init ---------- */
 (async () => {
   try { ME = await api('me'); } catch (e) { toast(e.message, true); }
@@ -552,6 +672,8 @@ SAVERS.staff = {
   if (access('settings')) loadSettings().catch(e => toast(e.message, true)); else lockPane('settings');
   if (!access('subs')) lockPane('subs');
   if (!access('site')) lockPane('site');
+  if (!access('design')) lockPane('design');
+  fetch('/api/site', { cache: 'no-store' }).then(r => r.json()).then(d => { const l = d.design && d.design.logo; if (l && /^\/[\w\/.-]+$/.test(l)) document.querySelector('header img').src = l; }).catch(() => {});
   renderPerm('questions');
 })();
 </script>
