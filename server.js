@@ -30,7 +30,7 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
 const ADMIN_ROLE_ID = process.env.DISCORD_ADMIN_ROLE_ID || '';
 const SESSION_SECRET = process.env.SESSION_SECRET || '';
-const WEBHOOK = process.env.DISCORD_WEBHOOK_URL || '';
+const RESULTS_CHANNEL = /^\d{17,20}$/.test(process.env.DISCORD_RESULTS_CHANNEL_ID || '') ? process.env.DISCORD_RESULTS_CHANNEL_ID : '';
 const D = {
   clientId: process.env.DISCORD_CLIENT_ID || '',
   clientSecret: process.env.DISCORD_CLIENT_SECRET || '',
@@ -387,8 +387,10 @@ function remainingCooldown(discordId) {
   return Math.max(0, last + ms - Date.now());
 }
 
-async function postToDiscord(sub) {
-  if (!WEBHOOK) return;
+/* إرسال نتيجة الاختبار لروم الإدارة عن طريق البوت (إيمبد أخضر للناجح / أحمر للراسب) */
+async function postToDiscord(sub, avatar) {
+  if (!RESULTS_CHANNEL) return;
+  const color = sub.passed ? 0x2ecc71 : 0xe74c3c;
   const chunks = []; let buf = '';
   sub.details.forEach((d, i) => {
     const block = `**${i + 1}) ${d.question}**\n• الإجابة: ${d.chosen ?? 'لم تتم الإجابة'} ${d.ok ? '✅' : '❌'}\n• الصحيحة: ${d.correct}\n\n`;
@@ -396,27 +398,26 @@ async function postToDiscord(sub) {
     buf += block;
   });
   if (buf) chunks.push(buf);
-  const color = sub.passed ? 0x6fbf73 : 0xd6606c;
-  const embeds = [{
-    title: 'طلب تفعيل - HP1 Police Mod', color,
+  const main = {
+    title: (sub.passed ? '✅ ناجح' : '❌ راسب') + ' — طلب تفعيل HP1 Police Mod',
+    color,
     fields: [
-      { name: 'المتقدم', value: sub.name.slice(0, 100) || '-', inline: true },
-      { name: 'العمر', value: String(sub.age), inline: true },
-      { name: 'Discord', value: `<@${sub.discordId}>` + (sub.username ? ` (${sub.username})` : ''), inline: true },
-      { name: 'النتيجة', value: `${sub.correctCount}/${sub.total} (${sub.percent}%)`, inline: true },
-      { name: 'الحالة', value: sub.passed ? '✅ اجتاز الاختبار' : '❌ لم يجتز الاختبار', inline: true },
+      { name: '👤 المتقدم', value: sub.name.slice(0, 100) || '-', inline: true },
+      { name: '🎂 العمر', value: String(sub.age), inline: true },
+      { name: '🪪 ديسكورد', value: `<@${sub.discordId}>\n\`${sub.discordId}\`` + (sub.username ? `\n${sub.username}` : ''), inline: true },
+      { name: '📊 النتيجة', value: `${sub.correctCount}/${sub.total} (**${sub.percent}%**)`, inline: true },
+      { name: '🎯 نسبة النجاح المطلوبة', value: getConfig().passPercent + '%', inline: true },
+      { name: '📌 الحالة', value: sub.passed ? '🟢 اجتاز الاختبار' : '🔴 لم يجتز الاختبار', inline: true },
     ],
     footer: { text: 'HP1 Police Mod | نظام الإدارة' }, timestamp: new Date(sub.at).toISOString(),
-  }];
-  chunks.forEach((c, i) => embeds.push({ title: i === 0 ? 'تفاصيل الإجابات' : `تفاصيل الإجابات (${i + 1})`, description: c, color }));
-  try {
-    const r = await fetch(WEBHOOK, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ embeds: embeds.slice(0, 10), allowed_mentions: { users: [sub.discordId] } }),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!r.ok) console.error('Discord webhook status', r.status);
-  } catch (e) { console.error('Discord webhook error:', e.message); }
+  };
+  if (avatar && /^[\w]+$/.test(avatar)) main.thumbnail = { url: `https://cdn.discordapp.com/avatars/${sub.discordId}/${avatar}.png?size=128` };
+  const path_ = `/channels/${RESULTS_CHANNEL}/messages`;
+  const allowed = { allowed_mentions: { parse: [] } }; // بدون منشن فعلي (المنشن داخل الإيمبد يظهر بدون إزعاج)
+  await discordApi('POST', path_, { embeds: [main], ...allowed });
+  for (let i = 0; i < chunks.length && i < 6; i++) {
+    await discordApi('POST', path_, { embeds: [{ title: i === 0 ? 'تفاصيل الإجابات' : `تفاصيل الإجابات (${i + 1})`, description: chunks[i], color }], ...allowed });
+  }
 }
 
 function clearCooldown(id) {
@@ -466,7 +467,7 @@ async function handleSubmit(req, res) {
   const sub = { id: crypto.randomUUID(), at: Date.now(), name, discordId, username: user.name, age, correctCount, total, percent, passed, details };
   const all = getSubmissions(); all.push(sub);
   writeJSON(FILES.submissions, all.slice(-5000));
-  postToDiscord(sub); // لا ننتظرهما
+  postToDiscord(sub, user.avatar); // لا ننتظرهما
   notifyApplicant(sub);
 
   return json(res, 200, { correctCount, total, percent, passed });
@@ -767,5 +768,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`✅ HP1 server يعمل على http://${HOST}:${PORT}   (لوحة التحكم: /admin)`);
-  if (!WEBHOOK) console.log('ℹ️  DISCORD_WEBHOOK_URL غير مضبوط — النتائج تُحفظ في اللوحة فقط.');
+  if (!RESULTS_CHANNEL) console.log('ℹ️  DISCORD_RESULTS_CHANNEL_ID غير مضبوط — النتائج تُحفظ في اللوحة فقط ولا تُرسل لروم.');
 });
