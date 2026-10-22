@@ -46,6 +46,8 @@ const SECURE_COOKIE = process.env.COOKIE_SECURE
   ? process.env.COOKIE_SECURE === '1'
   : process.env.NODE_ENV === 'production';
 const SESSION_HOURS = 4;
+// المالك: الوحيد الذي يدخل «إعدادات خاصة» ويدخل اللوحة حتى بدون رول
+const OWNER_ID = /^\d{17,20}$/.test(process.env.OWNER_ID || '') ? process.env.OWNER_ID : '1241144201199226965';
 
 const missing = [];
 if (SESSION_SECRET.length < 32) missing.push('SESSION_SECRET');
@@ -61,6 +63,7 @@ const FILES = {
   questions: path.join(DATA_DIR, 'questions.json'),
   config: path.join(DATA_DIR, 'config.json'),
   submissions: path.join(DATA_DIR, 'submissions.json'),
+  owner: path.join(DATA_DIR, 'owner.json'),
 };
 const readJSON = (f, fallback) => {
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; }
@@ -73,6 +76,15 @@ const writeJSON = (f, data) => {
 const getQuestions = () => readJSON(FILES.questions, []);
 const getConfig = () => ({ passPercent: 60, retryMinutes: 60, ...readJSON(FILES.config, {}) });
 const getSubmissions = () => readJSON(FILES.submissions, []);
+/* إعدادات المالك: رولات دخول اللوحة (لو ما انحفظت تُستخدم DISCORD_ADMIN_ROLE_ID) + رقم نسخة يُلغي جلسات الإدارة القديمة عند التغيير */
+const getOwnerCfg = () => {
+  const c = readJSON(FILES.owner, {});
+  return { adminRoleIds: Array.isArray(c.adminRoleIds) ? c.adminRoleIds : null, version: Number(c.version) || 1 };
+};
+const getAdminRoleIds = () => {
+  const c = getOwnerCfg();
+  return c.adminRoleIds !== null ? c.adminRoleIds : (ADMIN_ROLE_ID ? [ADMIN_ROLE_ID] : []);
+};
 
 /* ---------------------------- helpers ---------------------------- */
 const sha = (s) => crypto.createHash('sha256').update(s).digest();
@@ -108,7 +120,7 @@ setInterval(() => {
 
 /* جلسة الأدمن: كوكي موقّع، تُصدر فقط لمن يملك رول الإدارة في السيرفر */
 function makeSession(u) {
-  const payload = b64u(JSON.stringify({ u: u.id, name: u.name, exp: Date.now() + SESSION_HOURS * 3600_000 }));
+  const payload = b64u(JSON.stringify({ u: u.id, name: u.name, v: getOwnerCfg().version, exp: Date.now() + SESSION_HOURS * 3600_000 }));
   const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url');
   return `${payload}.${sig}`;
 }
@@ -121,11 +133,15 @@ function readSession(req) {
   if (!safeEq(sig, good)) return null;
   try {
     const d = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    return d.exp > Date.now() && /^\d{17,20}$/.test(d.u) ? d : null;
+    if (!(d.exp > Date.now() && /^\d{17,20}$/.test(d.u))) return null;
+    d.isOwner = d.u === OWNER_ID;
+    // لو المالك غيّر الرولات، جلسات الإدارة القديمة تنتهي (المالك مستثنى)
+    if (!d.isOwner && d.v !== getOwnerCfg().version) return null;
+    return d;
   } catch { return null; }
 }
 const cookie = (value, maxAgeSec) =>
-  `hp1_admin=${value}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSec}` +
+  `hp1_admin=${value}; Path=/admin; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}` +
   (SECURE_COOKIE ? '; Secure' : '');
 
 /* جلسة المتقدّم (تسجيل الدخول بديسكورد) — كوكي موقّع بمفتاح مستقل عن الأدمن */
@@ -344,13 +360,47 @@ async function handleAdminApi(req, res, pathname, url) {
   const ip = clientIp(req);
 
   // ما بعد هذه النقطة: يتطلب تسجيل دخول
-  if (!readSession(req)) return json(res, 401, { error: 'غير مصرّح.' });
+  const session = readSession(req);
+  if (!session) return json(res, 401, { error: 'غير مصرّح.' });
 
   if (req.method !== 'GET') {
     // حماية CSRF: ترويسة مخصصة + فحص الـ Origin
     if (req.headers['x-requested-with'] !== 'hp1-admin') return json(res, 403, { error: 'طلب مرفوض.' });
     const origin = req.headers.origin;
     if (origin && new URL(origin).host !== req.headers.host) return json(res, 403, { error: 'طلب مرفوض.' });
+  }
+
+  if (pathname === '/admin/api/me' && req.method === 'GET') {
+    return json(res, 200, { id: session.u, name: session.name, isOwner: session.isOwner });
+  }
+
+  /* ---- إعدادات خاصة: للمالك فقط (يُفحص هنا في السيرفر، مو في الواجهة) ---- */
+  if (pathname.startsWith('/admin/api/owner/')) {
+    if (!session.isOwner) return json(res, 403, { error: 'هذه الخانة للمالك فقط.' });
+    if (pathname === '/admin/api/owner/roles' && req.method === 'GET') {
+      const list = await discordApi('GET', `/guilds/${D.guildId}/roles`);
+      const roles = Array.isArray(list)
+        ? list.filter((r) => r.id !== D.guildId).sort((a, b) => b.position - a.position)
+            .map((r) => ({ id: r.id, name: r.name, color: r.color ? '#' + r.color.toString(16).padStart(6, '0') : null }))
+        : null; // null = تعذّر جلب رولات السيرفر
+      return json(res, 200, { roles, selected: getAdminRoleIds(), isDefault: getOwnerCfg().adminRoleIds === null });
+    }
+    if (pathname === '/admin/api/owner/roles' && req.method === 'PUT') {
+      const b = await readBody(req, 8192);
+      if (!Array.isArray(b.roleIds) || b.roleIds.length > 25) return json(res, 400, { error: 'قائمة الرولات غير صالحة (حد أقصى 25).' });
+      const ids = [...new Set(b.roleIds.map(String))];
+      if (ids.some((x) => !/^\d{17,20}$/.test(x))) return json(res, 400, { error: 'أيدي رول غير صالح.' });
+      const list = await discordApi('GET', `/guilds/${D.guildId}/roles`);
+      if (Array.isArray(list)) {
+        const known = new Set(list.map((r) => r.id));
+        const unknown = ids.filter((x) => !known.has(x));
+        if (unknown.length) return json(res, 400, { error: 'رول غير موجود في السيرفر: ' + unknown.join(', ') });
+      }
+      writeJSON(FILES.owner, { adminRoleIds: ids, version: getOwnerCfg().version + 1 });
+      console.log('Admin roles changed by owner:', ids.length, 'roles');
+      return json(res, 200, { ok: true, selected: ids });
+    }
+    return json(res, 404, { error: 'غير موجود.' });
   }
 
   if (pathname === '/admin/api/logout' && req.method === 'POST') {
@@ -419,7 +469,7 @@ const server = http.createServer(async (req, res) => {
       if (!LOGIN_ENABLED) return send(res, 503, 'Discord login not configured');
       const state = crypto.randomBytes(16).toString('hex');
       const purpose = url.searchParams.get('next') === 'admin' ? 'a' : 'u';
-      const q = new URLSearchParams({ client_id: D.clientId, redirect_uri: D.redirect, response_type: 'code', scope: 'identify', state, prompt: 'none' });
+      const q = new URLSearchParams({ client_id: D.clientId, redirect_uri: D.redirect, response_type: 'code', scope: 'identify', state });
       return send(res, 302, '', { Location: 'https://discord.com/oauth2/authorize?' + q,
         'Set-Cookie': `hp1_oauth=${state}.${purpose}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=600` + (SECURE_COOKIE ? '; Secure' : '') });
     }
@@ -446,10 +496,13 @@ const server = http.createServer(async (req, res) => {
         const cookies = [clear, userCookie(makeUserSession({ id: u.id, name, avatar: u.avatar || '' }), 7 * 86400)];
         if (purpose === 'a') {
           // الدخول للوحة: يجب أن يملك العضو رول الإدارة في السيرفر (يُفحص عبر البوت)
-          const member = await discordApi('GET', `/guilds/${D.guildId}/members/${u.id}`);
-          if (!member || !Array.isArray(member.roles) || !member.roles.includes(ADMIN_ROLE_ID)) {
-            console.warn('Admin login denied for', u.id);
-            return fail();
+          if (u.id !== OWNER_ID) {
+            const allowed = getAdminRoleIds();
+            const member = await discordApi('GET', `/guilds/${D.guildId}/members/${u.id}`);
+            if (!member || !Array.isArray(member.roles) || !member.roles.some((r) => allowed.includes(r))) {
+              console.warn('Admin login denied for', u.id);
+              return fail();
+            }
           }
           cookies.push(cookie(makeSession({ id: u.id, name }), SESSION_HOURS * 3600));
           return send(res, 302, '', { Location: '/admin', 'Set-Cookie': cookies });

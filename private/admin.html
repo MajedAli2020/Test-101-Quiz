@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex,nofollow">
-<title>لوحة التحكم | HP1</title>
+<title>لوحة التحكم | Top Store</title>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -51,7 +51,7 @@ label.f{display:block;color:var(--gold);font-weight:700;margin:14px 0 6px}
 </head>
 <body>
 <header>
-  <h1>⚙️ لوحة تحكم HP1 Police Mod</h1>
+  <h1 style="display:flex;align-items:center;gap:10px"><img src="/logo.png" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover"> لوحة تحكم Top Store</h1>
   <div style="display:flex;gap:8px"><a class="btn sec sm" href="/" target="_blank" style="text-decoration:none">عرض الموقع</a><button class="btn sec sm" id="logout">تسجيل خروج</button></div>
 </header>
 <main>
@@ -59,10 +59,12 @@ label.f{display:block;color:var(--gold);font-weight:700;margin:14px 0 6px}
     <button class="tab active" data-t="questions">الأسئلة</button>
     <button class="tab" data-t="settings">الإعدادات</button>
     <button class="tab" data-t="subs">نتائج المتقدمين</button>
+    <button class="tab" data-t="owner" id="ownerTab">🔒 إعدادات خاصة</button>
   </div>
   <section id="questions"></section>
   <section id="settings" hidden></section>
   <section id="subs" hidden></section>
+  <section id="owner" hidden></section>
 </main>
 <div class="savebar" id="savebar" hidden>
   <span class="dirty">⚠️ لديك تغييرات غير محفوظة</span>
@@ -102,11 +104,13 @@ function toast(msg, err) {
 const fmtDate = (ms) => new Date(ms).toLocaleString('ar-SA', { dateStyle: 'medium', timeStyle: 'short' });
 
 /* ---------- tabs ---------- */
+let ME = { isOwner: false };
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === b));
-  ['questions', 'settings', 'subs'].forEach(id => $('#' + id).hidden = id !== b.dataset.t);
+  ['questions', 'settings', 'subs', 'owner'].forEach(id => $('#' + id).hidden = id !== b.dataset.t);
   $('#savebar').hidden = !(b.dataset.t === 'questions' && dirty);
   if (b.dataset.t === 'subs') loadSubs();
+  if (b.dataset.t === 'owner') loadOwner();
 }));
 $('#logout').addEventListener('click', async () => { try { await api('logout', 'POST'); } finally { location.href = '/admin'; } });
 
@@ -201,6 +205,48 @@ function renderSubs(filter = '') {
       det));
   });
 }
+
+/* ---------- إعدادات خاصة (للمالك فقط — السيرفر يرفض غيره) ---------- */
+async function loadOwner() {
+  const box = $('#owner'); box.replaceChildren();
+  if (!ME.isOwner) {
+    box.append(h('div', { class: 'card empty' }, '🔒 هذه الخانة للمالك فقط.'));
+    return;
+  }
+  let d;
+  try { d = await api('owner/roles'); } catch (e) { box.append(h('div', { class: 'card empty' }, e.message)); return; }
+  const sel = new Set(d.selected);
+  const card = h('div', { class: 'card' });
+  card.append(h('div', { class: 'qhead' }, h('span', {}, 'رولات الدخول للوحة التحكم')),
+    h('div', { class: 'hint' }, 'أي عضو يملك أحد الرولات المحددة يقدر يدخل اللوحة. أنت (المالك) تدخل دائماً بدون رول. ' +
+      (d.isDefault ? 'حالياً مستخدم الرول الافتراضي من إعدادات السيرفر.' : '')));
+  const list = h('div', { style: 'margin-top:12px;display:grid;gap:6px' });
+  const addRow = (id, name, color) => {
+    list.append(h('label', { class: 'row', style: 'margin:0;cursor:pointer' },
+      h('input', { type: 'checkbox', checked: sel.has(id), onchange: (e) => e.target.checked ? sel.add(id) : sel.delete(id) }),
+      h('span', { style: 'width:12px;height:12px;border-radius:50%;flex:none;background:' + (color || '#99aab5') }),
+      h('span', {}, name), h('span', { class: 'meta', style: 'margin:0 auto 0 0' }, id)));
+  };
+  if (d.roles) d.roles.forEach(r => addRow(r.id, r.name, r.color));
+  else card.append(h('div', { class: 'hint', style: 'color:#ff8d98' }, 'تعذّر جلب رولات السيرفر — أضف الأيدي يدوياً.'));
+  // رولات محفوظة لكنها مو ضمن القائمة (أو القائمة ما انجلبت)
+  const shown = new Set((d.roles || []).map(r => r.id));
+  d.selected.filter(id => !shown.has(id)).forEach(id => addRow(id, 'رول (أيدي يدوي)', null));
+  card.append(list);
+  const manual = h('input', { type: 'text', placeholder: 'إضافة رول بالأيدي (Copy Role ID)', inputMode: 'numeric', style: 'direction:ltr' });
+  card.append(h('div', { class: 'row', style: 'margin-top:14px' }, manual, h('button', { class: 'btn sec', onclick: () => {
+    const id = manual.value.trim();
+    if (!/^\d{17,20}$/.test(id)) return toast('أيدي الرول غير صالح', true);
+    sel.add(id); manual.value = ''; addRow(id, 'رول (أيدي يدوي)', null); list.lastChild.querySelector('input').checked = true;
+  } }, 'إضافة')));
+  card.append(h('div', { class: 'hint', style: 'margin-top:12px' }, 'بعد الحفظ تُنهى جلسات باقي الإدارة ويُطلب منهم تسجيل الدخول من جديد.'));
+  card.append(h('div', { style: 'margin-top:16px' }, h('button', { class: 'btn', onclick: async () => {
+    try { await api('owner/roles', 'PUT', { roleIds: [...sel] }); toast('✅ تم حفظ رولات الدخول'); loadOwner(); }
+    catch (e) { toast(e.message, true); }
+  } }, 'حفظ الرولات')));
+  box.append(card);
+}
+api('me').then(m => { ME = m; if (m.isOwner) $('#ownerTab').textContent = '👑 إعدادات خاصة'; }).catch(() => {});
 
 loadQ().catch(e => toast(e.message, true));
 loadSettings().catch(e => toast(e.message, true));
