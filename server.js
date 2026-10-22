@@ -13,48 +13,55 @@ const crypto = require('crypto');
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const PRIVATE_DIR = path.join(ROOT, 'private');
-const DATA_DIR = path.join(PRIVATE_DIR, 'data');
+const common = require('./common');
+const { dir: DATA_DIR, seed: SEED_DIR } = common.dataDir(ROOT);
+fs.mkdirSync(DATA_DIR, { recursive: true });
+// قرص دائم: انسخ ملفات البداية (أسئلة، مظهر...) لو ما كانت موجودة
+if (DATA_DIR !== SEED_DIR) { try { fs.cpSync(SEED_DIR, DATA_DIR, { recursive: true, force: false, errorOnExist: false }); } catch (e) { console.error('seed copy failed:', e.message); } }
 
-/* ---------------------------- .env ---------------------------- */
-(function loadEnv() {
-  const f = path.join(ROOT, '.env');
-  if (!fs.existsSync(f)) return;
-  for (const line of fs.readFileSync(f, 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
-  }
-})();
+/* ---------------------------- .env (التوكن فقط مطلوب) ---------------------------- */
+common.loadEnv(ROOT);
 
+const ON_HOST = !!process.env.RENDER || process.env.NODE_ENV === 'production';
 const PORT = Number(process.env.PORT || 3000);
 // على الاستضافات (Render وغيرها) يحدد PORT تلقائياً → نستمع على كل الواجهات
 const HOST = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
 const ADMIN_ROLE_ID = process.env.DISCORD_ADMIN_ROLE_ID || '';
-const SESSION_SECRET = process.env.SESSION_SECRET || '';
+const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+const SESSION_SECRET = process.env.SESSION_SECRET || (BOT_TOKEN ? common.derive(BOT_TOKEN, 'session') : '');
+const INTERNAL_KEY = process.env.INTERNAL_API_KEY || (BOT_TOKEN ? common.derive(BOT_TOKEN, 'internal') : '');
 const RESULTS_CHANNEL = /^\d{17,20}$/.test(process.env.DISCORD_RESULTS_CHANNEL_ID || '') ? process.env.DISCORD_RESULTS_CHANNEL_ID : '';
+const ID_RE = /^\d{17,20}$/;
+/* إعدادات ديسكورد: من اللوحة (discord.json) ← وإلا من .env ← وإلا تُشتق/تُكتشف تلقائياً */
 const D = {
-  clientId: process.env.DISCORD_CLIENT_ID || '',
-  clientSecret: process.env.DISCORD_CLIENT_SECRET || '',
-  redirect: process.env.DISCORD_REDIRECT_URI || '',
-  botToken: process.env.DISCORD_BOT_TOKEN || '',
-  guildId: process.env.DISCORD_GUILD_ID || '',
-  passRoleId: process.env.DISCORD_PASS_ROLE_ID || '',
+  clientId: process.env.DISCORD_CLIENT_ID || common.clientIdFromToken(BOT_TOKEN),
+  clientSecret: '', redirectCfg: '', botToken: BOT_TOKEN, guildId: '', passRoleId: '', _autoGuild: '',
 };
-const INTERNAL_KEY = process.env.INTERNAL_API_KEY || '';
-const LOGIN_ENABLED = !!(D.clientId && D.clientSecret && D.redirect);
-const TRUST_PROXY = process.env.TRUST_PROXY === '1';
-const SECURE_COOKIE = process.env.COOKIE_SECURE
-  ? process.env.COOKIE_SECURE === '1'
-  : process.env.NODE_ENV === 'production';
+const DISCORD_FILE = path.join(DATA_DIR, 'discord.json');
+function refreshD() {
+  let c = {}; try { c = JSON.parse(fs.readFileSync(DISCORD_FILE, 'utf8')); } catch {}
+  D.clientSecret = c.clientSecret || process.env.DISCORD_CLIENT_SECRET || '';
+  D.redirectCfg = c.redirectUri || process.env.DISCORD_REDIRECT_URI || '';
+  D.guildId = (ID_RE.test(c.guildId || '') ? c.guildId : '') || process.env.DISCORD_GUILD_ID || D._autoGuild || '';
+  D.passRoleId = Object.prototype.hasOwnProperty.call(c, 'passRoleId') ? (c.passRoleId || '') : (process.env.DISCORD_PASS_ROLE_ID || '');
+}
+refreshD();
+const loginEnabled = () => !!(D.clientId && D.clientSecret);
+const TRUST_PROXY = process.env.TRUST_PROXY === '1' || !!process.env.RENDER;
+const SECURE_COOKIE = process.env.COOKIE_SECURE ? process.env.COOKIE_SECURE === '1' : ON_HOST;
 const SESSION_HOURS = 4;
 // المالك: الوحيد الذي يدخل «إعدادات خاصة» ويدخل اللوحة حتى بدون رول
 const OWNER_ID = /^\d{17,20}$/.test(process.env.OWNER_ID || '') ? process.env.OWNER_ID : '1241144201199226965';
+/* رابط الرجوع بعد تسجيل الدخول: من الإعدادات أو يُحسب من عنوان الموقع نفسه */
+function redirectFor(req) {
+  if (D.redirectCfg) return D.redirectCfg;
+  const host = (TRUST_PROXY && req.headers['x-forwarded-host']) || req.headers.host || 'localhost';
+  const proto = (TRUST_PROXY && String(req.headers['x-forwarded-proto'] || '').split(',')[0]) || (SECURE_COOKIE ? 'https' : 'http');
+  return `${proto}://${host}/auth/callback`;
+}
 
-const missing = [];
-if (SESSION_SECRET.length < 32) missing.push('SESSION_SECRET');
-for (const [k, v] of Object.entries({ DISCORD_CLIENT_ID: D.clientId, DISCORD_CLIENT_SECRET: D.clientSecret, DISCORD_REDIRECT_URI: D.redirect,
-  DISCORD_BOT_TOKEN: D.botToken, DISCORD_GUILD_ID: D.guildId, DISCORD_ADMIN_ROLE_ID: ADMIN_ROLE_ID })) if (!v) missing.push(k);
-if (missing.length) {
-  console.error('\n❌ ناقص في ملف .env: ' + missing.join(', ') + '\n');
+if (SESSION_SECRET.length < 32 || !BOT_TOKEN) {
+  console.error('\n❌ لازم تضع DISCORD_BOT_TOKEN في ملف .env (هذا الوحيد المطلوب)\n');
   process.exit(1);
 }
 
@@ -66,6 +73,7 @@ const FILES = {
   owner: path.join(DATA_DIR, 'owner.json'),
   site: path.join(DATA_DIR, 'site.json'),
   perms: path.join(DATA_DIR, 'perms.json'),
+  discord: DISCORD_FILE,
 };
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -337,6 +345,56 @@ async function discordApi(method, apiPath, body) {
     return r.status === 204 ? {} : await r.json();
   } catch (e) { console.error('Discord API error:', e.message); return null; }
 }
+/* لو أيدي السيرفر ما انحدد: نأخذه تلقائياً إذا البوت في سيرفر واحد فقط */
+async function ensureGuild() {
+  if (D.guildId) return;
+  const list = await discordApi('GET', '/users/@me/guilds');
+  if (Array.isArray(list) && list.length === 1) { D._autoGuild = list[0].id; refreshD(); console.log('✅ تم اكتشاف السيرفر تلقائياً:', list[0].name); }
+  else console.log('ℹ️  حدّد أيدي السيرفر من اللوحة ← إعدادات خاصة (البوت في ' + (Array.isArray(list) ? list.length : '؟') + ' سيرفر).');
+}
+/* حفظ إعدادات ديسكورد (يُستخدم من اللوحة ومن صفحة /setup) */
+function saveDiscordSettings(b) {
+  let cur = {}; try { cur = JSON.parse(fs.readFileSync(DISCORD_FILE, 'utf8')); } catch {}
+  const next = { ...cur };
+  if (typeof b.clientSecret === 'string' && b.clientSecret.trim()) {
+    if (!/^[\w.-]{20,80}$/.test(b.clientSecret.trim())) throw Object.assign(new Error('الـ Client Secret غير صالح.'), { status: 400 });
+    next.clientSecret = b.clientSecret.trim();
+  }
+  if (typeof b.guildId === 'string') {
+    const g = b.guildId.trim();
+    if (g && !ID_RE.test(g)) throw Object.assign(new Error('أيدي السيرفر غير صالح.'), { status: 400 });
+    next.guildId = g;
+  }
+  if (typeof b.passRoleId === 'string') {
+    const r = b.passRoleId.trim();
+    if (r && !ID_RE.test(r)) throw Object.assign(new Error('أيدي رول الناجح غير صالح.'), { status: 400 });
+    next.passRoleId = r;
+  }
+  if (typeof b.redirectUri === 'string') {
+    const u = b.redirectUri.trim();
+    if (u && !/^https?:\/\/[^\s]+\/auth\/callback$/.test(u)) throw Object.assign(new Error('رابط الرجوع لازم ينتهي بـ /auth/callback'), { status: 400 });
+    next.redirectUri = u;
+  }
+  writeJSON(DISCORD_FILE, next);
+  refreshD(); memberCache.clear();
+}
+const SETUP_HTML = `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>إعداد أولي</title><style>body{font-family:system-ui,Tahoma;background:#0f0d08;color:#ded6c4;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}
+form{width:min(460px,100%);background:#17140c;border:1px solid #5a4a22;border-radius:16px;padding:22px}h1{color:#f7e6bb;font-size:20px;margin:0 0 6px}p{color:#a89f8a;font-size:14px;margin:4px 0 14px}
+label{display:block;margin:12px 0 4px;font-weight:700;color:#f7e6bb;font-size:14px}input{width:100%;box-sizing:border-box;padding:10px;border-radius:10px;border:1px solid #5a4a22;background:#0f0d08;color:#fff;direction:ltr;font:inherit}
+button{margin-top:18px;width:100%;padding:12px;border:0;border-radius:99px;background:#d4a84b;color:#140f04;font-weight:900;font:inherit;cursor:pointer}small{color:#a89f8a}code{direction:ltr;display:inline-block;background:#0f0d08;padding:2px 6px;border-radius:6px;color:#f7e6bb}#m{margin-top:12px;font-weight:700}</style>
+<form id="f"><h1>⚙️ الإعداد الأولي</h1><p>اكتب توكن البوت كإثبات إنك صاحب الموقع، ثم عبّئ الباقي. بعدها كل شي يتعدل من لوحة التحكم ← إعدادات خاصة.</p>
+<label>توكن البوت (للتأكيد)</label><input name="token" type="password" required autocomplete="off">
+<label>Client Secret</label><input name="clientSecret" type="password" autocomplete="off"><small>Discord Developer Portal ← OAuth2 ← Client Secret</small>
+<label>أيدي السيرفر <small>(اختياري، يُكتشف تلقائياً)</small></label><input name="guildId" inputmode="numeric">
+<label>أيدي رول الناجح <small>(اختياري)</small></label><input name="passRoleId" inputmode="numeric">
+<p style="margin-top:16px">أضف هذا الرابط في OAuth2 ← Redirects:<br><code id="ru"></code></p>
+<button>حفظ</button><div id="m"></div></form>
+<script>document.getElementById('ru').textContent=location.origin+'/auth/callback';
+document.getElementById('f').onsubmit=async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(e.target));const m=document.getElementById('m');
+const r=await fetch('/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});const j=await r.json().catch(()=>({}));
+m.textContent=r.ok?'✅ تم الحفظ — ارجع للموقع وسجّل دخولك':'❌ '+(j.error||r.status);m.style.color=r.ok?'#6fe39b':'#ff8d98'}</script></html>`;
+
 /* رتبة الناجح (تلقائي). الرسالة الخاصة ما تنرسل تلقائياً — تنرسل بزر الإشعار في روم النتائج */
 async function grantPassRole(sub) {
   if (sub.passed && D.botToken && D.guildId && D.passRoleId) await discordApi('PUT', `/guilds/${D.guildId}/members/${sub.discordId}/roles/${D.passRoleId}`);
@@ -587,6 +645,16 @@ async function handleAdminApi(req, res, pathname, url) {
       console.log('Admin roles changed by owner:', ids.length, 'roles');
       return json(res, 200, { ok: true, selected: ids });
     }
+    /* اتصال ديسكورد: Client Secret + أيدي السيرفر + رول الناجح + رابط الرجوع */
+    if (pathname === '/admin/api/owner/discord' && req.method === 'GET') {
+      return json(res, 200, { clientId: D.clientId, hasSecret: !!D.clientSecret, guildId: D.guildId, guildAuto: !!D._autoGuild && D.guildId === D._autoGuild,
+        passRoleId: D.passRoleId, redirectUri: D.redirectCfg, effectiveRedirect: redirectFor(req) });
+    }
+    if (pathname === '/admin/api/owner/discord' && req.method === 'PUT') {
+      const b = await readBody(req, 8192);
+      saveDiscordSettings(b);
+      return json(res, 200, { ok: true });
+    }
     /* صلاحيات الخانات: لكل خانة قائمة رولات (null = كل أصحاب اللوحة) */
     if (pathname === '/admin/api/owner/perms' && req.method === 'GET') return json(res, 200, getPerms());
     const pm = /^\/admin\/api\/owner\/perms\/(\w+)$/.exec(pathname);
@@ -742,12 +810,23 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname.startsWith('/admin')) return send(res, 404, 'Not found');
 
+    /* ---- إعداد أولي محمي بتوكن البوت ---- */
+    if (pathname === '/setup' && req.method === 'GET') return send(res, 200, SETUP_HTML, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex' });
+    if (pathname === '/setup' && req.method === 'POST') {
+      if (!hit('setup:' + clientIp(req), 10, 600_000).ok) return json(res, 429, { error: 'محاولات كثيرة، انتظر شوي.' });
+      const b = await readBody(req, 8192);
+      if (!safeEq(String(b.token || ''), D.botToken)) return json(res, 401, { error: 'التوكن غير صحيح.' });
+      saveDiscordSettings({ clientSecret: b.clientSecret, guildId: b.guildId, passRoleId: b.passRoleId });
+      ensureGuild();
+      return json(res, 200, { ok: true });
+    }
+
     /* ---- تسجيل الدخول بديسكورد ---- */
     if (pathname === '/auth/discord' && req.method === 'GET') {
-      if (!LOGIN_ENABLED) return send(res, 503, 'Discord login not configured');
+      if (!loginEnabled()) return send(res, 302, '', { Location: '/setup' });
       const state = crypto.randomBytes(16).toString('hex');
       const purpose = url.searchParams.get('next') === 'admin' ? 'a' : 'u';
-      const q = new URLSearchParams({ client_id: D.clientId, redirect_uri: D.redirect, response_type: 'code', scope: 'identify', state });
+      const q = new URLSearchParams({ client_id: D.clientId, redirect_uri: redirectFor(req), response_type: 'code', scope: 'identify', state });
       return send(res, 302, '', { Location: 'https://discord.com/oauth2/authorize?' + q,
         'Set-Cookie': `hp1_oauth=${state}.${purpose}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=600` + (SECURE_COOKIE ? '; Secure' : '') });
     }
@@ -759,11 +838,11 @@ const server = http.createServer(async (req, res) => {
       const code = url.searchParams.get('code'), state = url.searchParams.get('state') || '';
       const m = /(?:^|;\s*)hp1_oauth=([a-f0-9]{32})\.([au])/.exec(req.headers.cookie || '');
       if (m) purpose = m[2];
-      if (!LOGIN_ENABLED || !code || !m || !safeEq(m[1], state)) return fail();
+      if (!loginEnabled() || !code || !m || !safeEq(m[1], state)) return fail();
       try {
         const tr = await fetch('https://discord.com/api/v10/oauth2/token', {
           method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(8000),
-          body: new URLSearchParams({ client_id: D.clientId, client_secret: D.clientSecret, grant_type: 'authorization_code', code, redirect_uri: D.redirect }),
+          body: new URLSearchParams({ client_id: D.clientId, client_secret: D.clientSecret, grant_type: 'authorization_code', code, redirect_uri: redirectFor(req) }),
         });
         if (!tr.ok) throw new Error('token ' + tr.status);
         const { access_token } = await tr.json();
@@ -791,7 +870,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/auth/me' && req.method === 'GET') {
       const u = readUser(req);
       const isAdmin = u ? await isAdminUser(u.id) : false;
-      return json(res, 200, { enabled: LOGIN_ENABLED, loggedIn: !!u, isAdmin, ...(u ? { id: u.id, name: u.name,
+      return json(res, 200, { enabled: loginEnabled(), loggedIn: !!u, isAdmin, ...(u ? { id: u.id, name: u.name,
         avatarUrl: u.avatar ? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png?size=64` : null } : {}) });
     }
     if (pathname === '/auth/logout' && req.method === 'POST') {
@@ -878,5 +957,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`✅ HP1 server يعمل على http://${HOST}:${PORT}   (لوحة التحكم: /admin)`);
+  ensureGuild();
+  if (!loginEnabled()) console.log('⚠️  تسجيل الدخول غير مفعّل بعد — افتح /setup في موقعك وعبّئ الـ Client Secret.');
   if (!getResultsChannel()) console.log('ℹ️  روم النتائج غير محدد — حدده من اللوحة ← الإعدادات (أو DISCORD_RESULTS_CHANNEL_ID). النتائج تُحفظ في اللوحة فقط حالياً.');
 });

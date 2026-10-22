@@ -366,6 +366,29 @@ async function loadOwner() {
     catch (e) { toast(e.message, true); }
   } }, 'حفظ الرولات')));
   box.append(card);
+  await renderDiscordCard(box);
+}
+async function renderDiscordCard(box) {
+  let c; try { c = await api('owner/discord'); } catch (e) { return box.append(h('div', { class: 'card empty' }, e.message)); }
+  const secret = h('input', { type: 'password', autocomplete: 'off', placeholder: c.hasSecret ? '•••••••• (محفوظ — اتركه فاضي لو ما تبي تغيّره)' : 'الصق الـ Client Secret' , style: 'direction:ltr' });
+  const guild = h('input', { type: 'text', inputMode: 'numeric', value: c.guildId || '', placeholder: 'أيدي السيرفر', style: 'direction:ltr' });
+  const pass = h('input', { type: 'text', inputMode: 'numeric', value: c.passRoleId || '', placeholder: 'أيدي رول الناجح (اختياري)', style: 'direction:ltr' });
+  const redir = h('input', { type: 'text', value: c.redirectUri || '', placeholder: c.effectiveRedirect, style: 'direction:ltr' });
+  box.append(h('div', { class: 'card', style: 'margin-top:16px' },
+    h('div', { class: 'qhead' }, h('span', {}, '🔌 اتصال ديسكورد')),
+    h('div', { class: 'hint' }, 'التوكن هو الشي الوحيد في ملف .env. باقي الإعدادات هنا. الـ Client ID يُؤخذ تلقائياً من التوكن: ' + (c.clientId || '—')),
+    h('label', { class: 'f' }, 'Client Secret'), secret,
+    h('div', { class: 'hint' }, c.hasSecret ? '✅ محفوظ' : '⚠️ غير محفوظ — تسجيل الدخول بديسكورد ما يشتغل بدونه.'),
+    h('label', { class: 'f' }, 'أيدي السيرفر'), guild,
+    h('div', { class: 'hint' }, c.guildAuto ? 'تم اكتشافه تلقائياً من البوت.' : 'اتركه فاضي ليُكتشف تلقائياً (لو البوت في سيرفر واحد).'),
+    h('label', { class: 'f' }, 'رول الناجح (يُعطى تلقائياً عند النجاح)'), pass,
+    h('div', { class: 'hint' }, 'لازم رتبة البوت تكون فوق هذا الرول.'),
+    h('label', { class: 'f' }, 'رابط الرجوع (Redirect)'), redir,
+    h('div', { class: 'hint' }, 'اتركه فاضي ليُحسب تلقائياً. لازم تضيف هذا الرابط في Discord Developer Portal ← OAuth2 ← Redirects:  ' + c.effectiveRedirect),
+    h('div', { style: 'margin-top:16px' }, h('button', { class: 'btn', onclick: async () => {
+      try { await api('owner/discord', 'PUT', { clientSecret: secret.value, guildId: guild.value, passRoleId: pass.value, redirectUri: redir.value }); toast('✅ تم حفظ إعدادات ديسكورد'); loadOwner(); }
+      catch (e) { toast(e.message, true); }
+    } }, 'حفظ'))));
 }
 
 /* ---------- إعدادات الموقع: القوانين + تواصل معنا ---------- */

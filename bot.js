@@ -11,23 +11,22 @@
  */
 const fs = require('fs');
 const path = require('path');
-(function loadEnv() {
-  const f = path.join(__dirname, '.env');
-  if (!fs.existsSync(f)) return;
-  for (const line of fs.readFileSync(f, 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
-  }
-})();
+const common = require('./common');
+common.loadEnv(__dirname);
 
 const { Client, GatewayIntentBits, SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActivityType, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
-const GUILD_ID = process.env.DISCORD_GUILD_ID;
-const KEY = process.env.INTERNAL_API_KEY;
+const KEY = process.env.INTERNAL_API_KEY || (TOKEN ? common.derive(TOKEN, 'internal') : '');
+/* أيدي السيرفر: من .env أو من إعدادات اللوحة (discord.json) أو تلقائياً لو البوت في سيرفر واحد */
+function configuredGuild() {
+  if (process.env.DISCORD_GUILD_ID) return process.env.DISCORD_GUILD_ID;
+  try { const g = JSON.parse(fs.readFileSync(path.join(common.dataDir(__dirname).dir, 'discord.json'), 'utf8')).guildId; if (/^\d{17,20}$/.test(g || '')) return g; } catch {}
+  return '';
+}
 const SITE = (process.env.SITE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`).replace(/\/$/, '');
-if (!TOKEN || !GUILD_ID || !KEY) {
-  console.error('❌ لازم تضبط DISCORD_BOT_TOKEN و DISCORD_GUILD_ID و INTERNAL_API_KEY في .env (عبّئ ملف .env)');
+if (!TOKEN) {
+  console.error('❌ لازم تضع DISCORD_BOT_TOKEN في ملف .env');
   process.exit(1);
 }
 
@@ -53,7 +52,9 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] }); // لا يح
 
 client.once('ready', async () => {
   client.user.setActivity('اختبارات HP1 Police Mod', { type: ActivityType.Watching });
-  const guild = await client.guilds.fetch(GUILD_ID);
+  const gid = configuredGuild() || (client.guilds.cache.size === 1 ? client.guilds.cache.first().id : '');
+  if (!gid) { console.error('❌ ما قدرت أحدد السيرفر: حدد أيدي السيرفر من اللوحة ← إعدادات خاصة (البوت في ' + client.guilds.cache.size + ' سيرفر).'); return; }
+  const guild = await client.guilds.fetch(gid);
   await guild.commands.set(commands);
   console.log(`✅ البوت شغّال: ${client.user.tag} — تم تسجيل الأوامر في ${guild.name}`);
 });

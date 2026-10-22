@@ -4,7 +4,7 @@
   "private": true,
   "description": "موقع HP1 Police Mod مع لوحة تحكم (بدون مكتبات خارجية)",
   "scripts": {
-    "start": "node server.js",
+    "start": "node start.js",
     "bot": "node bot.js"
   },
   "engines": {

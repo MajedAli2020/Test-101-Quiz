@@ -4,27 +4,11 @@ services:
     runtime: node
     plan: free
     buildCommand: npm install
-    startCommand: node start.js
+    startCommand: npm start
     healthCheckPath: /
     envVars:
       - key: NODE_ENV
         value: production
-      - key: TRUST_PROXY
-        value: "1"
-      - key: SESSION_SECRET
-        generateValue: true
-      # القيم التالية يسألك عنها Render وقت الإنشاء (sync: false)
-      - key: DISCORD_CLIENT_ID
-        sync: false
-      - key: DISCORD_CLIENT_SECRET
-        sync: false
+      # الوحيد المطلوب — باقي الإعدادات من لوحة التحكم ← إعدادات خاصة
       - key: DISCORD_BOT_TOKEN
-        sync: false
-      - key: DISCORD_GUILD_ID
-        sync: false
-      - key: DISCORD_ADMIN_ROLE_ID
-        sync: false
-      - key: DISCORD_REDIRECT_URI
-        sync: false
-      - key: INTERNAL_API_KEY
         sync: false
