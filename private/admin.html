@@ -262,6 +262,7 @@ async function loadSettings() {
   let chs = null; try { chs = (await api('channels')).channels; } catch {}
   const pass = h('input', { type: 'number', min: 1, max: 100, value: c.passPercent });
   const retry = h('input', { type: 'number', min: 0, max: 10080, value: c.retryMinutes });
+  const qpa = h('input', { type: 'number', min: 1, max: 300, value: c.questionsPerAttempt || 15 });
   const prm = h('select', {}, h('option', { value: 'allow' }, 'يقدر يعيد الاختبار'), h('option', { value: 'never' }, 'ما يقدر يعيد (خلاص)'));
   prm.value = c.passRetryMode === 'never' ? 'never' : 'allow';
   const prmin = h('input', { type: 'number', min: 0, max: 525600, value: c.passRetryMinutes || 0 });
@@ -277,6 +278,7 @@ async function loadSettings() {
   const vars = h('div', { class: 'hint' }, 'المتغيرات: {name} الاسم · {mention} منشن العضو · {percent} النسبة · {correct} الإجابات الصحيحة · {total} عدد الأسئلة · {pass_percent} نسبة النجاح المطلوبة · {minutes} مدة الانتظار. اترك الخانة فاضية لرجوع النص الافتراضي.');
   box.append(h('div', { class: 'card' },
     h('label', { class: 'f' }, 'نسبة النجاح (%)'), pass, h('div', { class: 'hint' }, 'الحد الأدنى للنسبة المئوية لاجتياز الاختبار.'),
+    h('label', { class: 'f' }, 'عدد الأسئلة لكل محاولة'), qpa, h('div', { class: 'hint' }, `يسحب الموقع هذا العدد عشوائياً من بنك الأسئلة لكل متقدم في كل محاولة (البنك الآن فيه ${c.bankSize ?? '؟'} سؤال). لو كتبت أكثر من حجم البنك تنعرض كل الأسئلة.`),
     h('label', { class: 'f' }, 'مدة الانتظار بعد الرسوب (بالدقائق)'), retry, h('div', { class: 'hint' }, 'اكتب 0 لإلغاء مدة الانتظار. تُطبَّق من السيرفر على أيدي الديسكورد.'),
     h('label', { class: 'f' }, 'بعد النجاح: هل يقدر يعيد الاختبار؟'), prm,
     h('label', { class: 'f' }, 'مدة الانتظار بعد النجاح قبل ما يعيد (بالدقائق)'), prmin, h('div', { class: 'hint' }, 'تنطبق فقط لو اخترت «يقدر يعيد». اكتب 0 ليعيد مباشرة. مثال: 1440 = يوم، 10080 = أسبوع. الإدارة تقدر تفك القفل عن أي عضو من بوت «/فك-الانتظار» أو من النتائج.'),
@@ -285,7 +287,7 @@ async function loadSettings() {
     h('label', { class: 'f' }, 'رسالة الإشعار — للراسب'), fm, vars,
     h('div', { class: 'hint' }, 'الرسالة ما تنرسل تلقائياً؛ تنرسل في خاص العضو لما تضغط الزر في روم النتائج.'),
     h('div', { style: 'margin-top:18px' }, h('button', { class: 'btn', onclick: async () => {
-      try { await api('config', 'PUT', { passPercent: +pass.value, retryMinutes: +retry.value, passRetryMode: prm.value, passRetryMinutes: +prmin.value || 0, resultsChannelId: chan.value.trim(), passMessage: pm.value, failMessage: fm.value }); toast('✅ تم حفظ الإعدادات'); }
+      try { await api('config', 'PUT', { questionsPerAttempt: +qpa.value, passPercent: +pass.value, retryMinutes: +retry.value, passRetryMode: prm.value, passRetryMinutes: +prmin.value || 0, resultsChannelId: chan.value.trim(), passMessage: pm.value, failMessage: fm.value }); toast('✅ تم حفظ الإعدادات'); }
       catch (e) { toast(e.message, true); }
     } }, 'حفظ الإعدادات'))));
 }

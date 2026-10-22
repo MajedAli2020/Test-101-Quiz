@@ -548,6 +548,11 @@ footer{text-align:center;padding:38px 18px 30px;margin-top:60px;color:var(--mute
 #toTop:hover{transform:translateY(-4px);box-shadow:0 12px 30px rgba(var(--gold-rgb),.25)}
 
 .hidden{display:none!important}
+.time-banner{margin:0 0 14px;padding:12px 16px;border-radius:12px;border:1px solid #ff9a8f;background:rgba(255,90,80,.12);color:#ffb4ab;font-weight:800;text-align:center}
+.option-btn.locked{opacity:.65;cursor:not-allowed;pointer-events:none}
+.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%) translateY(-140%);z-index:9999;max-width:92vw;padding:12px 20px;border-radius:12px;background:#2a1412;border:1px solid #ff9a8f;color:#ffd2cc;font-weight:800;box-shadow:0 10px 30px rgba(0,0,0,.45);transition:transform .35s ease}
+.toast.show{transform:translateX(-50%) translateY(0)}
+
 
 /* ============================ RESPONSIVE ============================ */
 @media(min-width:1001px) and (max-width:1500px){nav{gap:1px}nav a{padding:8px 7px;font-size:13px}.head-cta .discord-btn{padding:9px 13px;font-size:13px}}
@@ -1097,11 +1102,13 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
       <p id="cooldownNote" style="text-align:center;color:var(--gold-lt);font-weight:700;margin-top:14px"></p>
     </div>
 
+    <div id="toast" class="toast" role="alert"></div>
     <div id="quizScreen" class="question-box hidden">
       <div class="quiz-top">
         <span id="count">السؤال 1</span>
         <span class="timer" id="timer">15:00</span>
       </div>
+      <div id="timeBanner" class="time-banner hidden">⏰ انتهى الوقت! تم قفل الإجابات، اضغط «إرسال» الآن لتسليم اختبارك.</div>
       <div class="progress"><span id="bar"></span></div>
       <h2 class="question" id="question"></h2>
       <div id="optionsContainer" class="options-container"></div>
@@ -1279,20 +1286,20 @@ function renderNavLogin(me){
 
 /* ===================== QUIZ DATA (من السيرفر) ===================== */
 let PASS_PERCENT=60;
-let questions=[]; // {id, question, options} — بدون الإجابات الصحيحة
+let questions=[], quizReady=false; // الأسئلة تنسحب عشوائياً من السيرفر عند البدء {id, question, options}
 async function loadQuiz(){
   try{
     const r=await fetch("/api/quiz",{cache:"no-store"});
     if(!r.ok)throw new Error(r.status);
     const d=await r.json();
-    questions=d.questions||[];
+    quizReady=true;
     PASS_PERCENT=d.passPercent;
     RETRY_DELAY_MS=d.retryMinutes*60*1000;
   }catch(e){console.error("Quiz load error",e)}
 }
 
 /* ===================== STATE ===================== */
-let current=0, QUIZ_MIN=15, time=900, timerInterval=null;
+let current=0, QUIZ_MIN=15, time=900, timerInterval=null, deadline=0, timeUp=false, warned=false, toastTimer=null;
 let playerNameValue="", discordIdValue="", ageValue="";
 let answers=[];
 let RETRY_DELAY_MS=60*60*1000;
@@ -1596,8 +1603,8 @@ async function startQuiz(){
   if(!/^\d{1,2}$/.test(ageInput.value.trim())){showCustomAlert("الرجاء كتابة عمرك بشكل صحيح.","العمر مطلوب","👤");ageInput.focus();return}
   if(!agree.checked){showCustomAlert("يجب الموافقة على الشروط والتعليمات أولاً.","لم تتم الموافقة","⚠️");return}
 
-  if(!questions.length)await loadQuiz();
-  if(!questions.length){showCustomAlert("تعذر تحميل الأسئلة، حدّث الصفحة وحاول مرة أخرى.","خطأ","⚠️");return}
+  if(!quizReady)await loadQuiz();
+  if(!quizReady){showCustomAlert("تعذر تحميل الأسئلة، حدّث الصفحة وحاول مرة أخرى.","خطأ","⚠️");return}
   try{
     const cr=await fetch("/api/cooldown?discord="+encodeURIComponent(discordId.value.trim()));
     const cj=await cr.json();
@@ -1608,6 +1615,20 @@ async function startQuiz(){
       return;
     }
   }catch(e){}
+  /* نبلّغ السيرفر أن الاختبار بدأ؛ هو اللي يحسب الوقت */
+  let st;
+  try{
+    const sr=await fetch("/api/start",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    st=await sr.json().catch(()=>({}));
+    if(!sr.ok){
+      if(sr.status===403&&st.locked){QUIZ_LOCKED=true;refreshCooldownNote()}
+      showCustomAlert(st.error||"تعذر بدء الاختبار، حاول مرة أخرى.","تعذر البدء","⚠️");
+      return;
+    }
+  }catch(e){showCustomAlert("تعذر الاتصال بالسيرفر، حاول مرة أخرى.","تعذر البدء","⚠️");return}
+
+  questions=Array.isArray(st.questions)?st.questions:[];
+  if(!questions.length){showCustomAlert("تعذر تحميل الأسئلة، حدّث الصفحة وحاول مرة أخرى.","خطأ","⚠️");return}
   shuffleArray(questions);
   questions.forEach(shuffleQuestionOptions);
 
@@ -1616,7 +1637,15 @@ async function startQuiz(){
   ageValue=ageInput.value.trim();
 
   quizIsRunning=true; setLawsLocked(true);
-  current=0; time=QUIZ_MIN*60; answers=[];
+  current=0; answers=[]; timeUp=false; warned=false;
+  document.getElementById("timeBanner").classList.add("hidden");
+  QUIZ_MIN=Math.round(st.durationMs/60000)||QUIZ_MIN;
+  deadline=performance.now()+st.remainingMs;   // الوقت المتبقي من السيرفر
+  time=Math.ceil(st.remainingMs/1000);
+  /* لو حدّث الصفحة: نرجّع إجاباته المحفوظة */
+  questions.forEach((q,i)=>{const k=q.options.indexOf((st.answers||{})[q.id]);if(k>=0)answers[i]=k});
+  const firstOpen=questions.findIndex((q,i)=>answers[i]===undefined);
+  current=firstOpen<0?questions.length-1:firstOpen;
 
   document.getElementById("rulesScreen").classList.add("hidden");
   document.getElementById("resultScreen").classList.add("hidden");
@@ -1625,10 +1654,26 @@ async function startQuiz(){
   showQuestion();
   clearInterval(timerInterval);
   updateTimer();
-  timerInterval=setInterval(()=>{
-    time--; updateTimer();
-    if(time<=0){clearInterval(timerInterval);finishQuiz()}
-  },1000);
+  timerInterval=setInterval(tickTimer,250);
+  tickTimer();
+}
+
+function showToast(msg){
+  const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove("show"),7000);
+}
+function tickTimer(){
+  if(timeUp)return;
+  time=Math.max(0,Math.ceil((deadline-performance.now())/1000));
+  updateTimer();
+  if(time<=60&&time>0&&!warned&&QUIZ_MIN>1){warned=true;showToast("⏳ تنبيه: باقي أقل من دقيقة على انتهاء الوقت!")}
+  if(time<=0)onTimeUp();
+}
+function onTimeUp(){
+  timeUp=true;clearInterval(timerInterval);updateTimer();
+  document.getElementById("toast").classList.remove("show");
+  document.getElementById("timeBanner").classList.remove("hidden");
+  showQuestion(); // يعيد الرسم والإجابات مقفولة
 }
 
 function updateTimer(){
@@ -1649,23 +1694,29 @@ function showQuestion(){
   q.options.forEach((opt,idx)=>{
     const id=`q${current}_opt${idx}`;
     const label=document.createElement("label");
-    label.className="option-btn"+(answers[current]===idx?" selected":"");
+    label.className="option-btn"+(answers[current]===idx?" selected":"")+(timeUp?" locked":"");
     label.setAttribute("for",id);
     const inp=document.createElement("input");
-    inp.type="radio";inp.name="q"+current;inp.id=id;inp.value=idx;inp.checked=answers[current]===idx;
+    inp.type="radio";inp.name="q"+current;inp.id=id;inp.value=idx;inp.checked=answers[current]===idx;inp.disabled=timeUp;
     const sp=document.createElement("span");sp.textContent=opt;
     label.append(inp,sp);
-    label.querySelector("input").addEventListener("change",()=>{answers[current]=idx;showQuestion()});
+    label.querySelector("input").addEventListener("change",()=>{
+      if(timeUp)return;
+      answers[current]=idx;
+      fetch("/api/progress",{method:"POST",headers:{"Content-Type":"application/json"},keepalive:true,body:JSON.stringify({id:q.id,answer:q.options[idx]})}).catch(()=>{});
+      showQuestion();
+    });
     box.appendChild(label);
   });
 
-  document.getElementById("prevBtn").style.display=current===0?"none":"inline-flex";
-  document.getElementById("nextBtn").textContent=(current===questions.length-1)?"إنهاء الاختبار":"التالي";
+  document.getElementById("prevBtn").style.display=(current===0||timeUp)?"none":"inline-flex";
+  document.getElementById("nextBtn").textContent=timeUp?"إرسال":((current===questions.length-1)?"إنهاء الاختبار":"التالي");
 }
 
 function prevQuestion(){if(current>0){current--;showQuestion()}}
 
 function nextQuestion(){
+  if(timeUp){finishQuiz();return}
   if(answers[current]===undefined){
     showCustomAlert("الرجاء اختيار إجابة قبل الانتقال للسؤال التالي.","الإجابة مطلوبة","✍️");
     return;
@@ -1710,7 +1761,7 @@ function showResultMessage(d){
 
 /* ===================== SEND RESULT ===================== */
 async function finishQuiz(){
-  clearInterval(timerInterval);
+  clearInterval(timerInterval);timeUp=true;document.getElementById("toast").classList.remove("show");
   document.getElementById("quizScreen").classList.add("hidden");
   document.getElementById("resultScreen").classList.remove("hidden");
   document.getElementById("resultTitle").textContent="جاري تصحيح الاختبار...";
@@ -1740,7 +1791,7 @@ async function finishQuiz(){
     quizIsRunning=false; setLawsLocked(false);
     document.getElementById("resultScreen").classList.add("hidden");
     document.getElementById("rulesScreen").classList.remove("hidden");
-    showCustomAlert("حدث خطأ أثناء إرسال طلبك، حاول مرة أخرى أو تواصل مع الإدارة.","فشل الإرسال","⚠️");
+    showCustomAlert((err&&err.message&&!/^Submit Error/.test(err.message))?err.message:"حدث خطأ أثناء إرسال طلبك، حاول مرة أخرى أو تواصل مع الإدارة.","فشل الإرسال","⚠️");
   }
 }
 

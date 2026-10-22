@@ -91,7 +91,7 @@ const getQuestions = () => readJSON(FILES.questions, []);
 /* نصوص الإشعار الافتراضية — المتغيرات: {name} {mention} {percent} {correct} {total} {pass_percent} {minutes} */
 const DEFAULT_PASS_MSG = '🎉 مبروك! اجتزت اختبار **HP1 Police Mod** بنسبة **{percent}%**.\nسيتم مراجعة طلبك من الإدارة والتواصل معك قريباً.';
 const DEFAULT_FAIL_MSG = '❌ للأسف لم تجتز اختبار **HP1 Police Mod** (نسبتك {percent}%).\nيمكنك إعادة الاختبار بعد {minutes} دقيقة.';
-const getConfig = () => ({ passPercent: 60, retryMinutes: 60, passRetryMode: 'allow', passRetryMinutes: 0, resultsChannelId: '', passMessage: DEFAULT_PASS_MSG, failMessage: DEFAULT_FAIL_MSG, ...readJSON(FILES.config, {}) });
+const getConfig = () => ({ passPercent: 60, retryMinutes: 60, questionsPerAttempt: 15, passRetryMode: 'allow', passRetryMinutes: 0, resultsChannelId: '', passMessage: DEFAULT_PASS_MSG, failMessage: DEFAULT_FAIL_MSG, ...readJSON(FILES.config, {}) });
 /* روم النتائج: من الإعدادات في اللوحة، وإن ما انضبط يُستخدم DISCORD_RESULTS_CHANNEL_ID من .env */
 const getResultsChannel = () => { const c = getConfig().resultsChannelId; return /^\d{17,20}$/.test(c || '') ? c : RESULTS_CHANNEL; };
 const getSubmissions = () => readJSON(FILES.submissions, []);
@@ -516,6 +516,7 @@ async function postToDiscord(sub, avatar) {
       { name: '🪪 ديسكورد', value: `<@${sub.discordId}>\n\`${sub.discordId}\`` + (sub.username ? `\n${sub.username}` : ''), inline: true },
       { name: '📊 النتيجة', value: `${sub.correctCount}/${sub.total} (**${sub.percent}%**)`, inline: true },
       { name: '🎯 نسبة النجاح المطلوبة', value: getConfig().passPercent + '%', inline: true },
+      { name: '⏱️ الوقت المستغرق', value: `${Math.floor(sub.elapsedMs / 60000)}د ${String(Math.floor((sub.elapsedMs % 60000) / 1000)).padStart(2, '0')}ث من ${Math.round(sub.durationMs / 60000)}د` + (sub.timedOut ? ' — ⚠️ انتهى الوقت' : ''), inline: true },
       { name: '📌 الحالة', value: sub.passed ? '🟢 اجتاز الاختبار' : '🔴 لم يجتز الاختبار', inline: true },
     ],
     footer: { text: 'HP1 Police Mod | نظام الإدارة' }, timestamp: new Date(sub.at).toISOString(),
@@ -541,6 +542,69 @@ function clearCooldown(id) {
   return cleared;
 }
 
+/* ---------------------------- جلسات الاختبار (التوقيت من السيرفر) ---------------------------- */
+const SESS_FILE = path.join(DATA_DIR, 'active-quiz.tmp'); // ليس .json عشان ما يدخل في النسخ الاحتياطي
+const GRACE_MS = 3_000;         // سماح بسيط لتأخر الشبكة (حفظ آخر إجابة)
+const STALE_MS = 30 * 60_000;   // جلسة منتهية ومتروكة أكثر من 30 دقيقة تُعتبر مهجورة
+const quizSessions = new Map(Object.entries(readJSON(SESS_FILE, {})));
+let sessTimer = null;
+function saveSessions() {
+  clearTimeout(sessTimer);
+  sessTimer = setTimeout(() => {
+    const now = Date.now();
+    for (const [k, v] of quizSessions) if (now > v.startedAt + v.durationMs + STALE_MS) quizSessions.delete(k);
+    try { fs.writeFileSync(SESS_FILE, JSON.stringify(Object.fromEntries(quizSessions))); } catch {}
+  }, 1000);
+}
+function drawQuestionIds() {
+  const ids = getQuestions().map((q) => q.id);
+  for (let i = ids.length - 1; i > 0; i--) { const j = crypto.randomInt(i + 1); [ids[i], ids[j]] = [ids[j], ids[i]]; } // خلط عشوائي آمن
+  return ids.slice(0, Math.min(getConfig().questionsPerAttempt, ids.length));
+}
+const publicQuestions = (qids) => {
+  const map = new Map(getQuestions().map((q) => [q.id, q]));
+  return qids.map((id) => map.get(id)).filter(Boolean).map(({ id, question, options }) => ({ id, question, options })); // بدون الإجابات الصحيحة
+};
+const quizDurationMs = () => ((getSite().quizIntro && getSite().quizIntro.durationMinutes) || 15) * 60_000;
+
+async function handleStart(req, res) {
+  const user = readUser(req);
+  if (!user) return json(res, 401, { error: 'سجّل الدخول بحساب ديسكورد أولاً.' });
+  const rl = hit('start:' + user.id, 30, 3600_000);
+  if (!rl.ok) return json(res, 429, { error: 'محاولات كثيرة، حاول لاحقاً.' });
+  const cs = cooldownState(user.id);
+  if (cs.locked) return json(res, 403, { error: 'اجتزت الاختبار مسبقاً ولا يمكنك إعادته.', locked: true });
+  if (cs.remainingMs > 0) return json(res, 429, { error: 'إعادة الاختبار غير متاحة الآن.', remainingMs: cs.remainingMs });
+  const now = Date.now();
+  let s = quizSessions.get(user.id);
+  // جلسة موجودة (حتى لو انتهت وقتها) ← نكمل عليها ولا نعطيه وقت جديد؛ المهجورة فقط تُستبدل
+  if (!s || now > s.startedAt + s.durationMs + STALE_MS) {
+    const qids = drawQuestionIds();
+    if (!qids.length) return json(res, 503, { error: 'لا توجد أسئلة.' });
+    s = { startedAt: now, durationMs: quizDurationMs(), answers: {}, qids };
+    quizSessions.set(user.id, s); saveSessions();
+  }
+  return json(res, 200, {
+    remainingMs: Math.max(0, s.startedAt + s.durationMs - now), durationMs: s.durationMs,
+    questions: publicQuestions(s.qids || getQuestions().map((q) => q.id)), // نفس الأسئلة المسحوبة لو حدّث الصفحة
+    answers: s.answers, // لو حدّث الصفحة يرجع لإجاباته
+  }, { 'Cache-Control': 'no-store' });
+}
+
+async function handleProgress(req, res) {
+  const user = readUser(req);
+  if (!user) return json(res, 401, { error: 'سجّل الدخول أولاً.' });
+  if (!hit('progress:' + user.id, 600, 3600_000).ok) return json(res, 429, { error: 'كثير.' });
+  const s = quizSessions.get(user.id);
+  if (!s) return json(res, 409, { error: 'لا يوجد اختبار جارٍ.', noSession: true });
+  if (Date.now() > s.startedAt + s.durationMs + GRACE_MS) return json(res, 409, { error: 'انتهى الوقت.', expired: true });
+  const b = await readBody(req, 4096);
+  const q = getQuestions().find((x) => x.id === String(b.id) && (!s.qids || s.qids.includes(x.id)));
+  if (!q || typeof b.answer !== 'string' || !q.options.includes(b.answer)) return json(res, 400, { error: 'إجابة غير صالحة.' });
+  s.answers[q.id] = b.answer; saveSessions();
+  return json(res, 200, { ok: true });
+}
+
 async function handleSubmit(req, res) {
   const ip = clientIp(req);
   const rl = hit('submit:' + ip, 15, 3600_000);
@@ -560,9 +624,20 @@ async function handleSubmit(req, res) {
   if (cs.locked) return json(res, 403, { error: 'اجتزت الاختبار مسبقاً ولا يمكنك إعادته.', locked: true });
   if (cs.remainingMs > 0) return json(res, 429, { error: 'إعادة الاختبار غير متاحة الآن.', remainingMs: cs.remainingMs });
 
-  const questions = getQuestions();
+  const sess = quizSessions.get(discordId);
+  if (!sess) return json(res, 409, { error: 'ما في اختبار مسجّل لك على السيرفر. ابدأ الاختبار من جديد.', noSession: true });
+  const questions = getQuestions().filter((q) => !sess.qids || sess.qids.includes(q.id)); // فقط الأسئلة اللي انسحبت له
   if (!questions.length) return json(res, 503, { error: 'لا توجد أسئلة.' });
-  const given = new Map(body.answers.map((a) => [String(a && a.id), a && typeof a.answer === 'string' ? a.answer : null]));
+
+  // التوقيت يحسبه السيرفر من لحظة البدء
+  const now = Date.now();
+  const elapsedMs = now - sess.startedAt;
+  const timedOut = elapsedMs > sess.durationMs + GRACE_MS;
+  // لو الإرسال بعد انتهاء الوقت: نعتمد فقط الإجابات المحفوظة على السيرفر قبل الانتهاء، وأي تعديل بعده يتجاهل
+  const src = timedOut
+    ? Object.entries(sess.answers).map(([id, answer]) => ({ id, answer }))
+    : body.answers;
+  const given = new Map(src.map((a) => [String(a && a.id), a && typeof a.answer === 'string' ? a.answer : null]));
 
   let correctCount = 0;
   const details = questions.map((q) => {
@@ -576,11 +651,13 @@ async function handleSubmit(req, res) {
   const percent = Math.round((correctCount / total) * 100);
   const passed = percent >= getConfig().passPercent;
 
-  const sub = { id: crypto.randomUUID(), at: Date.now(), name, discordId, username: user.name, age, correctCount, total, percent, passed, details };
+  const sub = { id: crypto.randomUUID(), at: Date.now(), name, discordId, username: user.name, age, correctCount, total, percent, passed, details,
+    elapsedMs, durationMs: sess.durationMs, timedOut: elapsedMs > sess.durationMs };
   const all = getSubmissions(); all.push(sub);
   writeJSON(FILES.submissions, all.slice(-5000));
   postToDiscord(sub, user.avatar); // لا ننتظرهما
   grantPassRole(sub);
+  quizSessions.delete(discordId); saveSessions();
 
   return json(res, 200, { correctCount, total, percent, passed });
 }
@@ -758,9 +835,11 @@ async function handleAdminApi(req, res, pathname, url) {
     return json(res, 200, { channels });
   }
   if (pathname === '/admin/api/config') {
-    if (req.method === 'GET') return json(res, 200, getConfig());
+    if (req.method === 'GET') return json(res, 200, { ...getConfig(), bankSize: getQuestions().length });
     if (req.method === 'PUT') {
       const b = await readBody(req, 16384);
+      const questionsPerAttempt = Number(b.questionsPerAttempt);
+      if (!Number.isInteger(questionsPerAttempt) || questionsPerAttempt < 1 || questionsPerAttempt > 300) return json(res, 400, { error: 'عدد الأسئلة لكل محاولة من 1 إلى 300.' });
       const passPercent = Number(b.passPercent), retryMinutes = Number(b.retryMinutes);
       if (!Number.isInteger(passPercent) || passPercent < 1 || passPercent > 100) return json(res, 400, { error: 'نسبة النجاح من 1 إلى 100.' });
       if (!Number.isInteger(retryMinutes) || retryMinutes < 0 || retryMinutes > 10080) return json(res, 400, { error: 'مدة الانتظار من 0 إلى 10080 دقيقة.' });
@@ -776,8 +855,8 @@ async function handleAdminApi(req, res, pathname, url) {
       const passMessage = String(b.passMessage || '').trim() || DEFAULT_PASS_MSG;
       const failMessage = String(b.failMessage || '').trim() || DEFAULT_FAIL_MSG;
       if (passMessage.length > 1500 || failMessage.length > 1500) return json(res, 400, { error: 'الرسالة أطول من 1500 حرف.' });
-      writeJSON(FILES.config, { passPercent, retryMinutes, passRetryMode, passRetryMinutes, resultsChannelId, passMessage, failMessage });
-      return json(res, 200, getConfig());
+      writeJSON(FILES.config, { passPercent, retryMinutes, questionsPerAttempt, passRetryMode, passRetryMinutes, resultsChannelId, passMessage, failMessage });
+      return json(res, 200, { ...getConfig(), bankSize: getQuestions().length });
     }
   }
   if (pathname === '/admin/api/submissions' && req.method === 'GET') {
@@ -947,11 +1026,9 @@ const server = http.createServer(async (req, res) => {
 
     /* ---- API العامة للكويز ---- */
     if (pathname === '/api/quiz' && req.method === 'GET') {
-      const { passPercent, retryMinutes } = getConfig();
-      return json(res, 200, {
-        passPercent, retryMinutes,
-        questions: getQuestions().map(({ id, question, options }) => ({ id, question, options })), // بدون الإجابات الصحيحة
-      });
+      const { passPercent, retryMinutes, questionsPerAttempt } = getConfig();
+      // الأسئلة ما تنرسل هنا؛ تنسحب عشوائياً من البنك عند بدء الاختبار (/api/start)
+      return json(res, 200, { passPercent, retryMinutes, questionCount: Math.min(questionsPerAttempt, getQuestions().length) });
     }
     if (pathname === '/api/site' && req.method === 'GET') return json(res, 200, getSite(), { 'Cache-Control': 'no-cache' });
     if (pathname === '/api/cooldown' && req.method === 'GET') {
@@ -973,6 +1050,8 @@ const server = http.createServer(async (req, res) => {
         passPercent: cfg.passPercent, remainingMs: cs.remainingMs, locked: cs.locked,
       }, { 'Cache-Control': 'no-store' });
     }
+    if (pathname === '/api/start' && req.method === 'POST') return await handleStart(req, res);
+    if (pathname === '/api/progress' && req.method === 'POST') return await handleProgress(req, res);
     if (pathname === '/api/submit' && req.method === 'POST') return await handleSubmit(req, res);
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'غير موجود.' });
 
