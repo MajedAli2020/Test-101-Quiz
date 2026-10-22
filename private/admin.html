@@ -292,38 +292,97 @@ async function loadSettings() {
 
 /* ---------- submissions ---------- */
 let S = [];
+const SF = { q: '', status: '', result: '', from: '', to: '' };
+const STATUS_LABELS = { pending: '⏳ قيد المراجعة', interview: '🎤 مقابلة', accepted: '✅ مقبول', rejected: '⛔ مرفوض نهائياً' };
+const statusOf = (s) => s.passed ? (s.status || 'pending') : '';
 async function loadSubs() { S = await api('submissions'); renderSubs(); }
-function renderSubs(filter = '') {
+function filteredSubs() {
+  const from = SF.from ? new Date(SF.from + 'T00:00:00').getTime() : 0;
+  const to = SF.to ? new Date(SF.to + 'T23:59:59.999').getTime() : Infinity;
+  const q = SF.q.trim();
+  return S.filter(s => (!q || s.name.includes(q) || s.discordId.includes(q) || (s.username || '').includes(q))
+    && (!SF.result || (SF.result === 'pass') === !!s.passed)
+    && (!SF.status || statusOf(s) === SF.status)
+    && s.at >= from && s.at <= to);
+}
+function exportCsv(list) {
+  const esc = (v) => { v = String(v ?? ''); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
+  const head = ['الاسم', 'أيدي الديسكورد', 'اسم الديسكورد', 'العمر', 'الإجابات الصحيحة', 'عدد الأسئلة', 'النسبة %', 'النتيجة', 'حالة الطلب', 'ملاحظة الإدارة', 'آخر تعديل بواسطة', 'التاريخ'];
+  const rows = list.map(s => [s.name, s.discordId, s.username, s.age, s.correctCount, s.total, s.percent, s.passed ? 'ناجح' : 'راسب',
+    s.passed ? STATUS_LABELS[s.status || 'pending'].replace(/^\S+\s/, '') : '', s.note || '', s.statusBy || '', new Date(s.at).toLocaleString('en-GB')]);
+  const csv = '\ufeff' + [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const el = h('a', { href: url, download: 'hp1-results-' + new Date().toISOString().slice(0, 10) + '.csv' });
+  document.body.append(el); el.click(); el.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+async function patchSub(s, body, card) {
+  try {
+    const r = await api('submissions/' + s.id, 'PATCH', body);
+    Object.assign(s, { status: r.status, note: r.note, statusBy: r.statusBy, statusAt: r.statusAt });
+    toast('✅ تم الحفظ'); if (card) renderSubList(); renderSubStats();
+  } catch (e) { toast(e.message, true); }
+}
+function renderSubStats() {
+  const box = $('#subStats'); if (!box) return; box.replaceChildren();
+  const passed = S.filter(s => s.passed);
+  const cnt = (st) => passed.filter(s => (s.status || 'pending') === st).length;
+  [['إجمالي المحاولات', S.length, ''], ['ناجحون', passed.length, 'var(--ok)'], ['راسبون', S.length - passed.length, '#ff8d98'],
+   ['قيد المراجعة', cnt('pending'), ''], ['مقابلة', cnt('interview'), ''], ['مقبولون', cnt('accepted'), 'var(--ok)'], ['مرفوضون نهائياً', cnt('rejected'), '#ff8d98']]
+    .forEach(([l, n, c]) => box.append(h('div', { class: 'stat' }, h('b', c ? { style: 'color:' + c } : {}, n), h('span', {}, l))));
+}
+function renderSubs() {
   const box = $('#subs'); box.replaceChildren();
-  const passed = S.filter(s => s.passed).length;
-  box.append(h('div', { class: 'stats' },
-    h('div', { class: 'stat' }, h('b', {}, S.length), h('span', {}, 'إجمالي المحاولات')),
-    h('div', { class: 'stat' }, h('b', { style: 'color:var(--ok)' }, passed), h('span', {}, 'ناجحون')),
-    h('div', { class: 'stat' }, h('b', { style: 'color:#ff8d98' }, S.length - passed), h('span', {}, 'راسبون'))));
-  const search = h('input', { type: 'search', placeholder: '🔍 ابحث بالاسم أو أيدي الديسكورد...', value: filter,
-    oninput: (e) => { renderSubs(e.target.value); const n = $('#subs input[type=search]'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); } });
-  box.append(h('div', { style: 'margin-bottom:14px' }, search));
-  const list = S.filter(s => !filter || s.name.includes(filter) || s.discordId.includes(filter));
+  box.append(h('div', { class: 'stats', id: 'subStats' }));
+  const field = (label, el) => h('label', { class: 'f', style: 'margin:0;min-width:130px;flex:1' }, label, el);
+  const opt = (v, t) => h('option', { value: v }, t);
+  const sel = (key, opts) => { const e = h('select', { onchange: (ev) => { SF[key] = ev.target.value; renderSubList(); } }, opts.map(([v, t]) => opt(v, t))); e.value = SF[key]; return e; };
+  box.append(h('div', { class: 'card' },
+    h('div', { style: 'display:flex;gap:10px;flex-wrap:wrap;align-items:end' },
+      h('div', { style: 'flex:2;min-width:200px' }, h('input', { type: 'search', placeholder: '🔍 ابحث بالاسم أو أيدي الديسكورد...', value: SF.q, oninput: (e) => { SF.q = e.target.value; renderSubList(); } })),
+      field('النتيجة', sel('result', [['', 'الكل'], ['pass', 'ناجح'], ['fail', 'راسب']])),
+      field('حالة الطلب', sel('status', [['', 'الكل'], ...Object.entries(STATUS_LABELS)])),
+      field('من تاريخ', h('input', { type: 'date', value: SF.from, style: 'width:100%;padding:9px;border-radius:10px;border:1px solid var(--line);background:#0f0b04;color:var(--txt)', onchange: (e) => { SF.from = e.target.value; renderSubList(); } })),
+      field('إلى تاريخ', h('input', { type: 'date', value: SF.to, style: 'width:100%;padding:9px;border-radius:10px;border:1px solid var(--line);background:#0f0b04;color:var(--txt)', onchange: (e) => { SF.to = e.target.value; renderSubList(); } })),
+      h('button', { class: 'btn sm', onclick: () => { const l = filteredSubs(); if (!l.length) return toast('ما فيه نتائج للتصدير', true); exportCsv(l); } }, '⬇️ تصدير Excel')),
+    h('div', { class: 'hint', id: 'subCount' })));
+  box.append(h('div', { id: 'subList' }));
+  renderSubStats(); renderSubList();
+}
+function renderSubList() {
+  const box = $('#subList'); if (!box) return; box.replaceChildren();
+  const list = filteredSubs();
+  $('#subCount').textContent = `عدد النتائج المعروضة: ${list.length} من ${S.length} — التصدير يشمل النتائج المعروضة فقط.`;
   if (!list.length) box.append(h('div', { class: 'empty' }, 'لا توجد نتائج.'));
   list.forEach(s => {
     const det = h('div', { class: 'det', hidden: true },
       s.details.map((d, i) => h('div', {}, h('b', {}, `${i + 1}) ${d.question}`), h('br'),
         h('span', { class: d.ok ? 'ok' : 'bad' }, `الإجابة: ${d.chosen ?? 'لم تتم الإجابة'} ${d.ok ? '✅' : '❌'}`),
         d.ok ? '' : h('span', { class: 'meta', style: 'direction:rtl;display:block' }, `الصحيحة: ${d.correct}`))));
+    let review = null;
+    if (s.passed) {
+      const st = h('select', { style: 'width:auto;padding:6px 10px', onchange: (e) => patchSub(s, { status: e.target.value }, true) },
+        Object.entries(STATUS_LABELS).map(([v, t]) => h('option', { value: v }, t)));
+      st.value = s.status || 'pending';
+      const note = h('textarea', { rows: 2, maxLength: 500, placeholder: 'ملاحظة للإدارة (ما تظهر للمتقدم)...', onchange: (e) => patchSub(s, { note: e.target.value }, false) });
+      note.value = s.note || '';
+      review = h('div', { style: 'margin-top:10px;display:grid;gap:8px' },
+        h('div', { class: 'row', style: 'margin:0;align-items:center' }, h('span', { class: 'meta', style: 'margin:0' }, 'حالة الطلب:'), st,
+          s.statusBy ? h('span', { class: 'meta', style: 'margin:0' }, `آخر تعديل: ${s.statusBy} · ${fmtDate(s.statusAt)}`) : null), note);
+    }
     box.append(h('div', { class: 'card' },
       h('div', { class: 'sub-top' },
         h('div', {}, h('b', {}, s.name), ` — ${s.age} سنة `, h('span', { class: 'badge ' + (s.passed ? 'ok' : 'bad') }, `${s.correctCount}/${s.total} (${s.percent}%) ${s.passed ? 'ناجح' : 'راسب'}`),
           h('div', { class: 'meta' }, `${s.discordId} · ${fmtDate(s.at)}`)),
         h('div', { class: 'qtools' },
           h('button', { class: 'btn sec sm', onclick: () => det.hidden = !det.hidden }, 'التفاصيل'),
-          s.passed ? null : h('button', { class: 'btn sec sm', onclick: async () => {
-            try { const r = await api('cooldown/reset', 'POST', { discordId: s.discordId }); toast(`✅ تم فك الانتظار (${r.cleared})`); loadSubs(); } catch (e) { toast(e.message, true); }
+          h('button', { class: 'btn sec sm', onclick: async () => {
+            try { const r = await api('cooldown/reset', 'POST', { discordId: s.discordId }); toast(r.cleared ? `✅ تم فك الانتظار/القفل (${r.cleared})` : 'ما عليه انتظار'); loadSubs(); } catch (e) { toast(e.message, true); }
           } }, 'فك الانتظار'),
           h('button', { class: 'btn danger sm', onclick: async () => {
             if (!confirm('حذف هذه النتيجة نهائياً؟')) return;
             try { await api('submissions/' + s.id, 'DELETE'); loadSubs(); } catch (e) { toast(e.message, true); }
           } }, 'حذف'))),
-      det));
+      review, det));
   });
 }
 
@@ -367,6 +426,28 @@ async function loadOwner() {
   } }, 'حفظ الرولات')));
   box.append(card);
   await renderDiscordCard(box);
+  await renderBackupCard(box);
+}
+async function renderBackupCard(box) {
+  let b; try { b = await api('owner/backup'); } catch (e) { return; }
+  const status = h('div', { class: 'hint' });
+  const paint = (x) => {
+    status.textContent = !x.enabled ? 'غير مفعّل (يشتغل على الاستضافة فقط).'
+      : x.ok === false ? '❌ آخر محاولة فشلت: ' + x.error
+      : x.lastAt ? `✅ آخر نسخة: ${fmtDate(x.lastAt)} (${Math.max(1, Math.round(x.size / 1024))} KB)` : '⏳ ما تمت أول نسخة بعد (تتم تلقائياً بعد التشغيل بنصف دقيقة).';
+    status.style.color = x.ok === false ? '#ff8d98' : '';
+  };
+  paint(b);
+  box.append(h('div', { class: 'card', style: 'margin-top:16px' },
+    h('div', { class: 'qhead' }, h('span', {}, '🗄️ النسخ الاحتياطي التلقائي')),
+    h('div', { class: 'hint' }, 'كل تعديل (أسئلة، نتائج، إعدادات، صور) يُحفظ بعد 20 ثانية كملف مشفّر في روم خاص اسمه #hp1-data في سيرفرك، ويُسترجع تلقائياً لو Render مسح الملفات. البوت يحتاج صلاحية «Manage Channels» لإنشاء الروم أول مرة (أو أنشئه أنت كروم خاص وأعطِ البوت صلاحية رؤيته وإرسال الملفات).'),
+    status,
+    h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn', onclick: async (e) => {
+      e.target.disabled = true; e.target.textContent = '... جاري النسخ';
+      try { const r = await api('owner/backup', 'POST'); paint({ enabled: true, ...r }); toast('✅ تم النسخ الاحتياطي'); }
+      catch (err) { toast(err.message, true); try { paint({ enabled: true, ...(await api('owner/backup')) }); } catch {} }
+      e.target.disabled = false; e.target.textContent = 'نسخ احتياطي الآن';
+    } }, 'نسخ احتياطي الآن'))));
 }
 async function renderDiscordCard(box) {
   let c; try { c = await api('owner/discord'); } catch (e) { return box.append(h('div', { class: 'card empty' }, e.message)); }

@@ -1209,6 +1209,10 @@ async function openProfile(me){
   cell(P?P.attempts:0,"عدد المحاولات");
   cell(L?new Date(L.at).toLocaleDateString("ar-SA"):"—","تاريخ آخر محاولة");
   card.append(grid);
+  if(L&&L.passed){
+    const SL={pending:"⏳ قيد المراجعة",interview:"🎤 مقابلة",accepted:"✅ مقبول",rejected:"⛔ مرفوض نهائياً"};
+    const rs=document.createElement("div");rs.className="pf-retry";rs.textContent="حالة طلبك: "+(SL[L.status]||SL.pending);card.append(rs);
+  }
   const rt=document.createElement("div");rt.className="pf-retry";rt.textContent=profRetryText();card.append(rt);
   const act=document.createElement("div");act.className="pf-act";
   const go=document.createElement("button");go.className="btn";go.type="button";go.textContent="📝 الاختبار";

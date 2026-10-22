@@ -80,10 +80,12 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const readJSON = (f, fallback) => {
   try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; }
 };
+let onDataChange = () => {}; // يُربط بالنسخ الاحتياطي لاحقاً
 const writeJSON = (f, data) => {
   const tmp = f + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
   fs.renameSync(tmp, f);
+  if (!f.endsWith('backup-meta.json')) onDataChange();
 };
 const getQuestions = () => readJSON(FILES.questions, []);
 /* نصوص الإشعار الافتراضية — المتغيرات: {name} {mention} {percent} {correct} {total} {pass_percent} {minutes} */
@@ -104,6 +106,7 @@ const getAdminRoleIds = () => {
 };
 
 /* ---- خانات اللوحة + صلاحية كل خانة (يحددها المالك) ---- */
+const SUB_STATUSES = ['pending', 'interview', 'accepted', 'rejected'];
 const TABS = ['questions', 'settings', 'subs', 'site', 'design'];
 // perms.json: { [tab]: [roleIds] }  — الخانة بدون قيد = كل من يدخل اللوحة
 const getPerms = () => {
@@ -245,7 +248,7 @@ function pruneUploads() {
   try {
     for (const f of fs.readdirSync(UPLOAD_DIR)) {
       const fp = path.join(UPLOAD_DIR, f);
-      if (!keep.has(f) && Date.now() - fs.statSync(fp).mtimeMs > 3600_000) fs.unlinkSync(fp);
+      if (!keep.has(f) && Date.now() - fs.statSync(fp).mtimeMs > 3600_000) { fs.unlinkSync(fp); onDataChange(); }
     }
   } catch (e) { console.error('prune', e.message); }
 }
@@ -378,6 +381,9 @@ function saveDiscordSettings(b) {
   writeJSON(DISCORD_FILE, next);
   refreshD(); memberCache.clear();
 }
+const BACKUP_ON = ON_HOST && process.env.BACKUP !== 'off';
+const backup = require('./backup')({ dataDir: DATA_DIR, uploadDir: UPLOAD_DIR, token: BOT_TOKEN, derive: common.derive, getGuildId: () => D.guildId, clientId: D.clientId, discordApi });
+if (BACKUP_ON) onDataChange = () => backup.schedule();
 const SETUP_HTML = `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>إعداد أولي</title><style>body{font-family:system-ui,Tahoma;background:#0f0d08;color:#ded6c4;display:grid;place-items:center;min-height:100vh;margin:0;padding:16px}
 form{width:min(460px,100%);background:#17140c;border:1px solid #5a4a22;border-radius:16px;padding:22px}h1{color:#f7e6bb;font-size:20px;margin:0 0 6px}p{color:#a89f8a;font-size:14px;margin:4px 0 14px}
@@ -645,6 +651,13 @@ async function handleAdminApi(req, res, pathname, url) {
       console.log('Admin roles changed by owner:', ids.length, 'roles');
       return json(res, 200, { ok: true, selected: ids });
     }
+    /* النسخ الاحتياطي */
+    if (pathname === '/admin/api/owner/backup' && req.method === 'GET') return json(res, 200, { enabled: BACKUP_ON, ...backup.state });
+    if (pathname === '/admin/api/owner/backup' && req.method === 'POST') {
+      if (!BACKUP_ON) return json(res, 400, { error: 'النسخ الاحتياطي يشتغل على الاستضافة فقط.' });
+      const ok = await backup.run();
+      return json(res, ok ? 200 : 500, { ok, ...backup.state, error: backup.state.error });
+    }
     /* اتصال ديسكورد: Client Secret + أيدي السيرفر + رول الناجح + رابط الرجوع */
     if (pathname === '/admin/api/owner/discord' && req.method === 'GET') {
       return json(res, 200, { clientId: D.clientId, hasSecret: !!D.clientSecret, guildId: D.guildId, guildAuto: !!D._autoGuild && D.guildId === D._autoGuild,
@@ -710,7 +723,7 @@ async function handleAdminApi(req, res, pathname, url) {
     if (!type) return json(res, 400, { error: 'الصيغة غير مدعومة (PNG / JPG / GIF / WEBP).' });
     if (fs.readdirSync(UPLOAD_DIR).length > 300) return json(res, 400, { error: 'تراكمت صور كثيرة، احفظ التغييرات أولاً.' });
     const name = crypto.randomBytes(8).toString('hex') + '.' + type.ext;
-    fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
+    fs.writeFileSync(path.join(UPLOAD_DIR, name), buf); onDataChange();
     return json(res, 200, { url: '/uploads/' + name });
   }
 
@@ -769,6 +782,25 @@ async function handleAdminApi(req, res, pathname, url) {
   }
   if (pathname === '/admin/api/submissions' && req.method === 'GET') {
     return json(res, 200, getSubmissions().slice().reverse());
+  }
+  const pat = /^\/admin\/api\/submissions\/([\w-]{1,64})$/.exec(pathname);
+  if (pat && req.method === 'PATCH') {
+    const b = await readBody(req, 8192);
+    const all = getSubmissions(); const i = all.findIndex((x) => x.id === pat[1]);
+    if (i < 0) return json(res, 404, { error: 'النتيجة غير موجودة.' });
+    const next = { ...all[i] };
+    if ('status' in b) {
+      if (!SUB_STATUSES.includes(b.status)) return json(res, 400, { error: 'حالة غير صالحة.' });
+      next.status = b.status;
+    }
+    if ('note' in b) {
+      const n = String(b.note || '').trim();
+      if (n.length > 500) return json(res, 400, { error: 'الملاحظة أطول من 500 حرف.' });
+      next.note = n;
+    }
+    next.statusBy = session.name; next.statusAt = Date.now();
+    all[i] = next; writeJSON(FILES.submissions, all);
+    return json(res, 200, { ok: true, status: next.status || 'pending', note: next.note || '', statusBy: next.statusBy, statusAt: next.statusAt });
   }
   const del = /^\/admin\/api\/submissions\/([\w-]{1,64})$/.exec(pathname);
   if (del && req.method === 'DELETE') {
@@ -886,7 +918,7 @@ const server = http.createServer(async (req, res) => {
         if (!/^\d{17,20}$/.test(id)) return json(res, 400, { error: 'أيدي غير صالح.' });
         const mine = getSubmissions().filter((x) => x.discordId === id);
         const l = mine[mine.length - 1];
-        return json(res, 200, { latest: l ? { at: l.at, percent: l.percent, correctCount: l.correctCount, total: l.total, passed: l.passed } : null,
+        return json(res, 200, { latest: l ? { at: l.at, percent: l.percent, correctCount: l.correctCount, total: l.total, passed: l.passed, status: l.passed ? (l.status || 'pending') : null } : null,
           attempts: mine.length, remainingMs: cooldownState(id).remainingMs, locked: cooldownState(id).locked });
       }
       if (pathname === '/internal/notify' && req.method === 'POST') {
@@ -937,7 +969,7 @@ const server = http.createServer(async (req, res) => {
         attempts: mine.length,
         passedCount: mine.filter((x) => x.passed).length,
         bestPercent: mine.length ? Math.max(...mine.map((x) => x.percent)) : null,
-        latest: l ? { at: l.at, percent: l.percent, correctCount: l.correctCount, total: l.total, passed: l.passed, name: l.name } : null,
+        latest: l ? { at: l.at, percent: l.percent, correctCount: l.correctCount, total: l.total, passed: l.passed, name: l.name, status: l.passed ? (l.status || 'pending') : null } : null,
         passPercent: cfg.passPercent, remainingMs: cs.remainingMs, locked: cs.locked,
       }, { 'Cache-Control': 'no-store' });
     }
@@ -955,9 +987,22 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`✅ HP1 server يعمل على http://${HOST}:${PORT}   (لوحة التحكم: /admin)`);
-  ensureGuild();
-  if (!loginEnabled()) console.log('⚠️  تسجيل الدخول غير مفعّل بعد — افتح /setup في موقعك وعبّئ الـ Client Secret.');
-  if (!getResultsChannel()) console.log('ℹ️  روم النتائج غير محدد — حدده من اللوحة ← الإعدادات (أو DISCORD_RESULTS_CHANNEL_ID). النتائج تُحفظ في اللوحة فقط حالياً.');
-});
+(async () => {
+  // Render يمسح الملفات عند كل تشغيل ← نسترجع آخر نسخة احتياطية قبل ما نستقبل الزوار (بحد أقصى 15 ثانية)
+  try {
+    await Promise.race([
+      (async () => {
+        await ensureGuild();
+        if (BACKUP_ON && await backup.restore()) { refreshD(); console.log('♻️  تم استرجاع البيانات من النسخة الاحتياطية.'); }
+      })(),
+      new Promise((r) => setTimeout(r, 15_000)),
+    ]);
+  } catch (e) { console.error('Restore error:', e.message); }
+  server.listen(PORT, HOST, () => {
+    console.log(`✅ HP1 server يعمل على http://${HOST}:${PORT}   (لوحة التحكم: /admin)`);
+    ensureGuild();
+    if (BACKUP_ON) { backup.schedule(30_000); console.log('🗄️  النسخ الاحتياطي التلقائي مفعّل (روم #hp1-data).'); }
+    if (!loginEnabled()) console.log('⚠️  تسجيل الدخول غير مفعّل بعد — افتح /setup في موقعك وعبّئ الـ Client Secret.');
+    if (!getResultsChannel()) console.log('ℹ️  روم النتائج غير محدد — حدده من اللوحة ← الإعدادات (أو DISCORD_RESULTS_CHANNEL_ID). النتائج تُحفظ في اللوحة فقط حالياً.');
+  });
+})();
