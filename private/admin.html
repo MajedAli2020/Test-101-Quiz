@@ -611,6 +611,54 @@ async function loadDesign() {
   try { const d = await api('design'); DG = dgNorm(d.design); DGS = JSON.stringify(DG); renderDesign(); }
   catch (e) { toast(e.message, true); }
 }
+/* ---------- استخراج ألوان الموقع من الشعار ---------- */
+function rgb2hsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l];
+  const s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const hh = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [hh * 60, s, l];
+}
+function hsl2hex(hh, s, l) {
+  hh = ((hh % 360) + 360) % 360; s = Math.min(1, Math.max(0, s)); l = Math.min(1, Math.max(0, l));
+  const k = n => (n + hh / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = n => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))));
+  return '#' + [f(0), f(8), f(4)].map(v => v.toString(16).padStart(2, '0')).join('');
+}
+async function paletteFromLogo(src) {
+  const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('تعذّر قراءة الشعار')); i.src = src; });
+  const W = 64, cv = document.createElement('canvas'); cv.width = cv.height = W;
+  const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0, W, W);
+  const px = cx.getImageData(0, 0, W, W).data;
+  const bins = Array.from({ length: 24 }, () => ({ w: 0, s: 0, hx: 0, hy: 0 }));
+  let neutral = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] < 128) continue;                                  // شفاف
+    const [hh, s, l] = rgb2hsl(px[i], px[i + 1], px[i + 2]);
+    if (l < .1 || l > .93) continue;                                // أسود/أبيض تقريباً
+    if (s < .2) { neutral++; continue; }                            // رمادي
+    const w = s * (1 - Math.abs(l - .5));                           // نفضّل الألوان الواضحة
+    const b = bins[Math.floor(hh / 15) % 24];
+    b.w += w; b.s += s * w; b.hx += Math.cos(hh * Math.PI / 180) * w; b.hy += Math.sin(hh * Math.PI / 180) * w;
+  }
+  const best = bins.reduce((m, b) => b.w > m.w ? b : m, bins[0]);
+  if (best.w < 0.5) {                                               // شعار أبيض/أسود/رمادي → ألوان محايدة
+    return { gold: '#c9c9c9', goldLt: '#f2f2f2', goldDk: '#6e6e6e', ink: '#060606', ink2: '#0d0d0d', panel: '#141414', txt: '#f2f2f2', muted: '#a0a0a0' };
+  }
+  const H = (Math.atan2(best.hy, best.hx) * 180 / Math.PI + 360) % 360;
+  const S = Math.min(.9, Math.max(.45, best.s / best.w));
+  return {
+    gold: hsl2hex(H, S, .58), goldLt: hsl2hex(H, S * .75, .85), goldDk: hsl2hex(H, S * .8, .3),
+    ink: hsl2hex(H, Math.min(S, .5), .03), ink2: hsl2hex(H, Math.min(S, .5), .05), panel: hsl2hex(H, Math.min(S, .45), .08),
+    txt: hsl2hex(H, .2, .93), muted: hsl2hex(H, .12, .62),
+  };
+}
+const autoColorsOn = () => { try { return localStorage.getItem('hp1AutoColors') !== '0'; } catch { return true; } };
+async function applyLogoColors(src, quiet) {
+  try { DG.colors = await paletteFromLogo(src); dgDirty(); renderDesign(); if (!quiet) toast('🎨 تم أخذ ألوان الشعار — راجع المعاينة ثم اضغط «حفظ»'); }
+  catch (e) { toast(e.message, true); }
+}
 function dgUpload(key, max, mime) {
   return h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif', hidden: true, onchange: async (e) => {
     const f = e.target.files[0]; if (!f) return;
@@ -618,6 +666,7 @@ function dgUpload(key, max, mime) {
       const data = await fileToImageDataUrl(f, max, mime);
       const r = await api('design/upload', 'POST', { data });
       DG[key] = r.url; dgDirty(); renderDesign(); toast('✅ تم رفع الصورة — لا تنسى «حفظ»');
+      if (key === 'logo' && autoColorsOn()) await applyLogoColors(r.url);
     } catch (err) { toast(err.message, true); }
   } });
 }
@@ -635,7 +684,11 @@ function renderDesign() {
         h('div', { class: 'hint' }, 'يظهر في أعلى الموقع وفي الصفحة الرئيسية وفي أيقونة التبويب. الأفضل صورة مربعة (PNG شفاف).'),
         h('div', { class: 'row', style: 'margin:0' },
           h('button', { class: 'btn sm', onclick: () => logoFile.click() }, 'رفع شعار جديد'), logoFile,
-          DG.logo ? h('button', { class: 'btn danger sm', onclick: () => { DG.logo = ''; dgDirty(); renderDesign(); } }, 'الرجوع للشعار الأصلي') : null)))));
+          h('button', { class: 'btn sec sm', onclick: () => applyLogoColors(logoSrc) }, '🎨 خذ ألوان الموقع من الشعار'),
+          DG.logo ? h('button', { class: 'btn danger sm', onclick: () => { DG.logo = ''; dgDirty(); renderDesign(); } }, 'الرجوع للشعار الأصلي') : null),
+        h('label', { class: 'row', style: 'margin:8px 0 0;cursor:pointer' },
+          h('input', { type: 'checkbox', checked: autoColorsOn(), onchange: (e) => { try { localStorage.setItem('hp1AutoColors', e.target.checked ? '1' : '0'); } catch {} } }),
+          h('span', {}, 'أخذ الألوان تلقائياً عند رفع شعار جديد'))))));
 
   box.append(h('div', { class: 'card' },
     h('div', { class: 'qhead' }, h('span', {}, '🌄 خلفية الموقع')),
