@@ -82,7 +82,7 @@ async function monitorSite() {
   }
 }
 
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   client.user.setActivity('اختبارات HP1 Police Mod', { type: ActivityType.Watching });
   const gid = configuredGuild() || (client.guilds.cache.size === 1 ? client.guilds.cache.first().id : '');
   if (!gid) { console.error('❌ ما قدرت أحدد السيرفر: حدد أيدي السيرفر من اللوحة ← إعدادات خاصة (البوت في ' + client.guilds.cache.size + ' سيرفر).'); return; }
