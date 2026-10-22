@@ -623,7 +623,13 @@ window.applyDesign=function(d){
 try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}catch(e){}
 </script>
 </head>
-<body>
+<body class="intro-active">
+<div id="hp1Intro" role="status" aria-label="جاري تحميل HP1">
+  <div class="hp1-intro-orbit"><img src="logo.png" alt="HP1"></div>
+  <div class="hp1-intro-mark">HP1</div>
+  <div class="hp1-intro-sub">POLICE MOD</div>
+  <div class="hp1-intro-line"><span></span></div>
+</div>
 
 <div class="bg-img"></div>
 <div class="bg-aurora"></div>
