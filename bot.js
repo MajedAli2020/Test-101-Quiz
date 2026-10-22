@@ -25,6 +25,10 @@ function configuredGuild() {
   return '';
 }
 const SITE = (process.env.SITE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`).replace(/\/$/, '');
+const ALERT_USER_ID = process.env.ALERT_USER_ID || process.env.OWNER_ID || '1241144201199226965';
+const ALERT_CHANNEL_ID = process.env.DISCORD_ALERT_CHANNEL_ID || '';
+let monitorFailures = 0;
+let siteWasDown = false;
 if (!TOKEN) {
   console.error('❌ لازم تضع DISCORD_BOT_TOKEN في ملف .env');
   process.exit(1);
@@ -49,6 +53,34 @@ const commands = [
 ].map((c) => c.toJSON());
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] }); // لا يحتاج أي Privileged Intent
+async function sendMonitorAlert(content) {
+  try {
+    if (ALERT_CHANNEL_ID) {
+      const channel = await client.channels.fetch(ALERT_CHANNEL_ID);
+      if (channel && channel.isTextBased()) return !!(await channel.send({ content }));
+    }
+    if (ALERT_USER_ID && /^\d{17,20}$/.test(ALERT_USER_ID)) {
+      const user = await client.users.fetch(ALERT_USER_ID);
+      return !!(await user.send({ content }));
+    }
+  } catch (e) { console.error('Monitor alert error:', e.message); }
+  return false;
+}
+async function monitorSite() {
+  try {
+    const r = await fetch(SITE + '/healthz', { signal: AbortSignal.timeout(5000), cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (siteWasDown) await sendMonitorAlert('✅ عاد موقع HP1 Quiz للعمل بشكل طبيعي.');
+    monitorFailures = 0; siteWasDown = false;
+  } catch (e) {
+    monitorFailures++;
+    console.error(`⚠️ فحص الموقع فشل (${monitorFailures}/2):`, e.message);
+    if (monitorFailures >= 2 && !siteWasDown) {
+      siteWasDown = true;
+      await sendMonitorAlert(`🚨 تنبيه: موقع HP1 Quiz لا يستجيب حالياً.\nالرابط: ${SITE}\nالخطأ: ${e.message}`);
+    }
+  }
+}
 
 client.once('ready', async () => {
   client.user.setActivity('اختبارات HP1 Police Mod', { type: ActivityType.Watching });
@@ -57,17 +89,19 @@ client.once('ready', async () => {
   const guild = await client.guilds.fetch(gid);
   await guild.commands.set(commands);
   console.log(`✅ البوت شغّال: ${client.user.tag} — تم تسجيل الأوامر في ${guild.name}`);
+  monitorSite();
+  setInterval(monitorSite, 30_000);
 });
 
-/* زر «إرسال إشعار للعضو» تحت نتيجة المتقدم في روم النتائج */
+/* زر «إرسال التقرير للعضو» تحت نتيجة المتقدم في روم النتائج */
 async function handleNotifyButton(i) {
   await i.deferReply({ flags: MessageFlags.Ephemeral });
   const doneRow = (label) => new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('done').setLabel(label).setStyle(ButtonStyle.Secondary).setDisabled(true));
   try {
-    const r = await site('POST', '/internal/notify', { submissionId: i.customId.slice('notify:'.length), userId: i.user.id });
+    const r = await site('POST', '/internal/notify', { submissionId: i.customId.slice(i.customId.indexOf(':') + 1), userId: i.user.id });
     await i.message.edit({ components: [doneRow(`✅ تم إشعار العضو (${r.passed ? 'ناجح' : 'راسب'}) بواسطة ${i.user.displayName || i.user.username}`)] }).catch(() => {});
-    return i.editReply(`✅ تم إرسال إشعار ${r.passed ? 'النجاح' : 'الرسوب'} للعضو في الخاص.`);
+    return i.editReply(`✅ تم إرسال تقرير ${r.passed ? 'النجاح' : 'الرسوب'} للعضو في الخاص.`);
   } catch (e) {
     if (e.status === 403) return i.editReply('⛔ ما عندك صلاحية (تحتاج الوصول لخانة «نتائج المتقدمين» في لوحة التحكم).');
     if (e.status === 404) return i.editReply('⚠️ هذه النتيجة غير موجودة (ممكن انحذفت من اللوحة).');
@@ -75,13 +109,13 @@ async function handleNotifyButton(i) {
       await i.message.edit({ components: [doneRow('✅ تم إشعار العضو مسبقاً')] }).catch(() => {});
       return i.editReply('ℹ️ تم إرسال الإشعار لهذا العضو مسبقاً.');
     }
-    if (e.status === 502) return i.editReply('⚠️ تعذر الإرسال — غالباً الخاص مقفل عند العضو أو ما هو في السيرفر. تقدر تكلمه يدوياً.');
+    if (e.status === 502) return i.editReply('⚠️ تعذر إرسال التقرير — غالباً الخاص مقفل عند العضو أو ما هو في السيرفر. تقدر تكلمه يدوياً.');
     throw e;
   }
 }
 
 client.on('interactionCreate', async (i) => {
-  if (i.isButton() && i.customId.startsWith('notify:')) {
+  if (i.isButton() && (i.customId.startsWith('report:') || i.customId.startsWith('notify:'))) {
     return handleNotifyButton(i).catch((e) => {
       console.error(e);
       const msg = '⚠️ تعذر الاتصال بالموقع، حاول لاحقاً.';

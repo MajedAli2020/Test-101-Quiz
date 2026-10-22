@@ -412,10 +412,27 @@ function renderMessage(tpl, sub) {
 }
 async function sendNotice(sub) {
   const cfg = getConfig();
-  const content = renderMessage(sub.passed ? cfg.passMessage : cfg.failMessage, sub);
+  const notice = renderMessage(sub.passed ? cfg.passMessage : cfg.failMessage, sub);
+  const color = sub.passed ? 0x2ecc71 : 0xe74c3c;
+  const answerChunks = [];
+  let chunk = '';
+  for (const [i, d] of sub.details.entries()) {
+    const question = String(d.question || '').slice(0, 260);
+    const chosen = String(d.chosen ?? 'لم تتم الإجابة').slice(0, 260);
+    const correct = String(d.correct || '').slice(0, 260);
+    const block = `**${i + 1}) ${question}**\nإجابتك: ${chosen} ${d.ok ? '✅' : '❌'}${d.ok ? '' : `\nالإجابة الصحيحة: ${correct}`}\n\n`;
+    if (chunk && (chunk + block).length > 3800) { answerChunks.push(chunk); chunk = ''; }
+    chunk += block;
+  }
+  if (chunk) answerChunks.push(chunk);
+  const embeds = [{
+    title: '📋 تقرير اختبار HP1 Police Mod', color,
+    description: `${notice}\n\n**النتيجة:** ${sub.correctCount}/${sub.total} (${sub.percent}%)\n**الحالة:** ${sub.passed ? '✅ ناجح' : '❌ راسب'}\n**الوقت:** ${Math.floor(sub.elapsedMs / 60000)}د ${String(Math.floor((sub.elapsedMs % 60000) / 1000)).padStart(2, '0')}ث${sub.timedOut ? ' — انتهى الوقت' : ''}`,
+    footer: { text: 'إجاباتك في الاختبار — HP1 Police Mod' }, timestamp: new Date(sub.at).toISOString(),
+  }, ...answerChunks.slice(0, 6).map((description, i) => ({ title: i ? `الأسئلة والإجابات (${i + 1})` : 'الأسئلة والإجابات', description, color }))];
   const dm = await discordApi('POST', '/users/@me/channels', { recipient_id: sub.discordId });
   if (!dm) return false;
-  return !!(await discordApi('POST', `/channels/${dm.id}/messages`, { content, allowed_mentions: { parse: [] } }));
+  return !!(await discordApi('POST', `/channels/${dm.id}/messages`, { embeds, allowed_mentions: { parse: [] } }));
 }
 const notifying = new Set();
 
@@ -524,8 +541,8 @@ async function postToDiscord(sub, avatar) {
   if (avatar && /^[\w]+$/.test(avatar)) main.thumbnail = { url: `https://cdn.discordapp.com/avatars/${sub.discordId}/${avatar}.png?size=128` };
   const path_ = `/channels/${channelId}/messages`;
   const allowed = { allowed_mentions: { parse: [] } }; // بدون منشن فعلي (المنشن داخل الإيمبد يظهر بدون إزعاج)
-  const button = { type: 2, style: sub.passed ? 3 : 4, custom_id: 'notify:' + sub.id,
-    label: sub.passed ? '📩 إرسال إشعار النجاح للعضو' : '📩 إرسال إشعار الرسوب للعضو' };
+  const button = { type: 2, style: sub.passed ? 3 : 4, custom_id: 'report:' + sub.id,
+    label: '📋 إرسال التقرير للعضو' };
   await discordApi('POST', path_, { embeds: [main], components: [{ type: 1, components: [button] }], ...allowed });
   for (let i = 0; i < chunks.length && i < 6; i++) {
     await discordApi('POST', path_, { embeds: [{ title: i === 0 ? 'تفاصيل الإجابات' : `تفاصيل الإجابات (${i + 1})`, description: chunks[i], color }], ...allowed });
@@ -902,6 +919,9 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
     const pathname = url.pathname;
+    if (pathname === '/healthz' && (req.method === 'GET' || req.method === 'HEAD')) {
+      return json(res, 200, { ok: true, service: 'hp1-quiz', time: Date.now() });
+    }
 
     /* ---- لوحة التحكم ---- */
     if (pathname === '/admin' || pathname === '/admin/') {

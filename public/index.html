@@ -445,7 +445,6 @@ nav a.locked-laws{color:#7d7767!important;opacity:.6;cursor:not-allowed!importan
 .option-btn input{accent-color:var(--gold-lt);width:20px;height:20px;min-width:20px;cursor:pointer}
 .quiz-actions{margin-top:26px;display:flex;gap:12px}
 #nextBtn{flex:1}
-#prevBtn{flex:0 0 auto}
 
 .result{text-align:center;padding:clamp(28px,5vw,48px)}
 .result h2{font-size:clamp(23px,3.4vw,32px);margin-bottom:8px;font-weight:900;
@@ -1113,7 +1112,6 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
       <h2 class="question" id="question"></h2>
       <div id="optionsContainer" class="options-container"></div>
       <div class="quiz-actions">
-        <button class="btn secondary" id="prevBtn" onclick="prevQuestion()">السابق</button>
         <button class="btn" id="nextBtn" onclick="nextQuestion()">التالي</button>
       </div>
     </div>
@@ -1709,11 +1707,9 @@ function showQuestion(){
     box.appendChild(label);
   });
 
-  document.getElementById("prevBtn").style.display=(current===0||timeUp)?"none":"inline-flex";
   document.getElementById("nextBtn").textContent=timeUp?"إرسال":((current===questions.length-1)?"إنهاء الاختبار":"التالي");
 }
 
-function prevQuestion(){if(current>0){current--;showQuestion()}}
 
 function nextQuestion(){
   if(timeUp){finishQuiz();return}
