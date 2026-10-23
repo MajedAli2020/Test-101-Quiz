@@ -2,6 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
+<script src="i18n.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HP1 Police Mod | مود الشرطة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -505,6 +506,14 @@ nav a.locked-laws{color:#7d7767!important;opacity:.6;cursor:not-allowed!importan
 .discord-login{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:6px 0 16px;padding:14px 16px;border:1px solid var(--line-str);border-radius:16px;background:rgba(var(--gold-rgb),.06)}
 
 /* ===== profile panel ===== */
+.lang-btn{background:rgba(var(--gold-rgb),.1);border:1px solid var(--line-str);color:var(--gold-lt);border-radius:99px;padding:8px 14px;font:inherit;font-weight:800;font-size:13px;cursor:pointer;white-space:nowrap;transition:.25s}
+.lang-btn:hover{background:linear-gradient(135deg,var(--gold-lt),var(--gold));color:#140f04}
+.drawer a.lang-btn{display:block;text-align:center;border-radius:12px;margin-top:8px}
+html[lang=en] .head-cta{direction:ltr}
+.ac-note{margin:-6px 0 18px;padding:10px 14px;border-radius:12px;background:rgba(231,76,60,.08);border:1px solid rgba(231,76,60,.3);color:#ffb3ba;font-weight:700;font-size:14px;line-height:1.7}
+#acBanner{position:fixed;top:calc(var(--head-h) + 10px);left:50%;transform:translateX(-50%);z-index:9997;max-width:min(560px,92vw);padding:12px 18px;border-radius:14px;background:#2a0d10;border:1px solid #e74c3c;color:#ffd5d9;font-weight:800;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.6);display:none}
+#acBanner.show{display:block}
+body.quiz-run #quizScreen{-webkit-user-select:none;user-select:none}
 .pf-ov{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);display:none;align-items:flex-start;justify-content:flex-end;padding:78px 18px 18px}
 .pf-ov.show{display:flex}
 .pf-card{width:min(360px,100%);background:#15120b;border:1px solid var(--line-str);border-radius:18px;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.6);color:#ded6c4;animation:pfIn .2s ease}
@@ -663,6 +672,7 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
   <div class="head-cta">
     <div id="navLogin" class="nav-login"></div>
     <a class="discord-btn" href="https://discord.gg/hp1" target="_blank">انضم إلى الدسكورد</a>
+    <button class="lang-btn" type="button" onclick="toggleLang()" aria-label="Language">EN</button>
     <button class="burger" id="burger" aria-label="القائمة"><span></span><span></span><span></span></button>
   </div>
 </header>
@@ -680,7 +690,8 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
   <a onclick="showPage('contact',this)">تواصل معنا</a>
   <a onclick="showPage('credits',this)">الحقوق</a>
   <a onclick="showPage('quiz',this)">📝 الاختبار الإلكتروني</a>
-  <div id="navLoginM" class="nav-login nav-login-m"></div>
+  <div id="navLoginM" class="nav-login nav-login-m">  <a class="lang-btn" onclick="toggleLang()">EN</a>
+</div>
 </div>
 
 <!-- ===================== HOME ===================== -->
@@ -1121,6 +1132,7 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
         </div>
       </div>
 
+      <div class="ac-note">🚩 مغادرة صفحة الاختبار (تبديل التبويب أو النافذة) والنسخ واللصق أثناء الاختبار تُسجَّل وتظهر للإدارة مع نتيجتك.</div>
       <label class="agree-box" for="agree">
         <input type="checkbox" id="agree">
         <span id="agreeText">أوافق على جميع الشروط والأحكام ✅</span>
@@ -1131,6 +1143,7 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
     </div>
 
     <div id="toast" class="toast" role="alert"></div>
+    <div id="acBanner" role="alert"></div>
     <div id="quizScreen" class="question-box hidden">
       <div class="quiz-top">
         <span id="count">السؤال 1</span>
@@ -1241,7 +1254,7 @@ async function openProfile(me){
   cell(L?L.percent+"%":"—","آخر نتيجة");
   cell(P&&P.bestPercent!=null?P.bestPercent+"%":"—","أعلى نتيجة");
   cell(P?P.attempts:0,"عدد المحاولات");
-  cell(L?new Date(L.at).toLocaleDateString("ar-SA"):"—","تاريخ آخر محاولة");
+  cell(L?new Date(L.at).toLocaleDateString(HP1_I18N.lang==="en"?"en-GB":"ar-SA"):"—","تاريخ آخر محاولة");
   card.append(grid);
   if(L&&L.passed){
     const SL={pending:"⏳ قيد المراجعة",interview:"🎤 مقابلة",accepted:"✅ مقبول",rejected:"⛔ مرفوض نهائياً"};
@@ -1614,6 +1627,47 @@ function startRetryCountdown(){
   if(getRetryRemaining()>0)retryCooldownTimer=setInterval(updateRetryMessage,1000);
 }
 
+
+function toggleLang(){
+  if(quizIsRunning){showCustomAlert("لا يمكنك تغيير اللغة أثناء الاختبار.","تغيير اللغة","🌐");return}
+  HP1_I18N.set(HP1_I18N.lang==="en"?"ar":"en");
+}
+/* ===================== ANTI-CHEAT (تسجيل مخالفات الاختبار) ===================== */
+const AC={leaves:0,awayMs:0,copies:0,pastes:0,menus:0,resumes:0,hiddenAt:0,limit:0,bannerT:null};
+function acSend(type,extra){
+  try{fetch("/api/flag",{method:"POST",headers:{"Content-Type":"application/json"},keepalive:true,body:JSON.stringify(Object.assign({type:type},extra||{}))}).catch(()=>{})}catch(e){}
+}
+function acBanner(msg){
+  const b=document.getElementById("acBanner");if(!b)return;
+  b.textContent=msg;b.classList.add("show");
+  clearTimeout(AC.bannerT);AC.bannerT=setTimeout(()=>b.classList.remove("show"),7000);
+}
+function acReset(f,limit){
+  f=f||{};AC.leaves=f.leaves||0;AC.awayMs=f.awayMs||0;AC.copies=f.copies||0;AC.pastes=f.pastes||0;AC.menus=f.menus||0;AC.resumes=f.resumes||0;
+  AC.hiddenAt=0;AC.limit=Number(limit)||0;
+  document.body.classList.add("quiz-run");
+}
+function acStop(){document.body.classList.remove("quiz-run");AC.hiddenAt=0;const b=document.getElementById("acBanner");if(b)b.classList.remove("show")}
+function acAway(){if(quizIsRunning&&!AC.hiddenAt)AC.hiddenAt=Date.now()}
+function acBack(){
+  if(!quizIsRunning||!AC.hiddenAt)return;
+  const ms=Date.now()-AC.hiddenAt;AC.hiddenAt=0;
+  if(ms<500)return; // وميض قصير (نافذة منبثقة...) ما نحسبه
+  AC.leaves++;AC.awayMs+=ms;acSend("leave",{awayMs:ms});
+  if(AC.limit>0&&AC.leaves>AC.limit){
+    acBanner("⛔ تجاوزت الحد المسموح لمغادرة صفحة الاختبار، تم إنهاء اختبارك.");
+    setTimeout(()=>{if(quizIsRunning)finishQuiz()},1500);
+  }else{
+    acBanner("⚠️ تم تسجيل خروجك من صفحة الاختبار ("+AC.leaves+(AC.limit>0?" من "+AC.limit:"")+"). هذا يظهر للإدارة.");
+  }
+}
+document.addEventListener("visibilitychange",()=>{document.hidden?acAway():acBack()});
+window.addEventListener("blur",acAway);
+window.addEventListener("focus",acBack);
+["copy","cut"].forEach(t=>document.addEventListener(t,e=>{if(!quizIsRunning)return;e.preventDefault();AC.copies++;acSend("copy");acBanner("⚠️ النسخ ممنوع أثناء الاختبار وتم تسجيل المحاولة.")}));
+document.addEventListener("paste",e=>{if(!quizIsRunning)return;e.preventDefault();AC.pastes++;acSend("paste");acBanner("⚠️ اللصق ممنوع أثناء الاختبار وتم تسجيل المحاولة.")});
+document.addEventListener("contextmenu",e=>{if(!quizIsRunning)return;e.preventDefault();AC.menus++;acSend("menu")});
+
 /* ===================== QUIZ ===================== */
 function shuffleArray(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}}
 function shuffleQuestionOptions(q){shuffleArray(q.options)}
@@ -1663,7 +1717,7 @@ async function startQuiz(){
   discordIdValue=discordId.value.trim();
   ageValue=ageInput.value.trim();
 
-  quizIsRunning=true; setLawsLocked(true);
+  quizIsRunning=true; setLawsLocked(true); acReset(st.flags,st.leaveLimit);
   current=0; answers=[]; timeUp=false; warned=false;
   document.getElementById("timeBanner").classList.add("hidden");
   QUIZ_MIN=Math.round(st.durationMs/60000)||QUIZ_MIN;
@@ -1751,7 +1805,7 @@ function nextQuestion(){
 }
 
 function showResultMessage(d){
-  quizIsRunning=false; setLawsLocked(false);
+  quizIsRunning=false; setLawsLocked(false); acStop();
   const title=document.getElementById("resultTitle");
   const text=document.getElementById("resultText");
   const badge=document.getElementById("scoreBadge");
@@ -1813,7 +1867,7 @@ async function finishQuiz(){
     showResultMessage(d);
   }catch(err){
     console.error(err);
-    quizIsRunning=false; setLawsLocked(false);
+    quizIsRunning=false; setLawsLocked(false); acStop();
     document.getElementById("resultScreen").classList.add("hidden");
     document.getElementById("rulesScreen").classList.remove("hidden");
     showCustomAlert((err&&err.message&&!/^Submit Error/.test(err.message))?err.message:"حدث خطأ أثناء إرسال طلبك، حاول مرة أخرى أو تواصل مع الإدارة.","فشل الإرسال","⚠️");

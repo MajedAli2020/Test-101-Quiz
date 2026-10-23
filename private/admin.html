@@ -263,6 +263,12 @@ async function loadSettings() {
   const pass = h('input', { type: 'number', min: 1, max: 100, value: c.passPercent });
   const retry = h('input', { type: 'number', min: 0, max: 10080, value: c.retryMinutes });
   const qpa = h('input', { type: 'number', min: 1, max: 300, value: c.questionsPerAttempt || 15 });
+  const leave = h('input', { type: 'number', min: 0, max: 50, value: c.leaveLimit || 0 });
+  let alertChan;
+  if (chs) {
+    alertChan = h('select', {}, h('option', { value: '' }, '— رسالة خاصة للمالك —'), chs.map(x => h('option', { value: x.id }, '# ' + x.name)));
+    alertChan.value = chs.some(x => x.id === c.alertChannelId) ? c.alertChannelId : '';
+  } else alertChan = h('input', { type: 'text', placeholder: 'أيدي الروم (اختياري)', value: c.alertChannelId || '', style: 'direction:ltr' });
   const prm = h('select', {}, h('option', { value: 'allow' }, 'يقدر يعيد الاختبار'), h('option', { value: 'never' }, 'ما يقدر يعيد (خلاص)'));
   prm.value = c.passRetryMode === 'never' ? 'never' : 'allow';
   const prmin = h('input', { type: 'number', min: 0, max: 525600, value: c.passRetryMinutes || 0 });
@@ -282,12 +288,14 @@ async function loadSettings() {
     h('label', { class: 'f' }, 'مدة الانتظار بعد الرسوب (بالدقائق)'), retry, h('div', { class: 'hint' }, 'اكتب 0 لإلغاء مدة الانتظار. تُطبَّق من السيرفر على أيدي الديسكورد.'),
     h('label', { class: 'f' }, 'بعد النجاح: هل يقدر يعيد الاختبار؟'), prm,
     h('label', { class: 'f' }, 'مدة الانتظار بعد النجاح قبل ما يعيد (بالدقائق)'), prmin, h('div', { class: 'hint' }, 'تنطبق فقط لو اخترت «يقدر يعيد». اكتب 0 ليعيد مباشرة. مثال: 1440 = يوم، 10080 = أسبوع. الإدارة تقدر تفك القفل عن أي عضو من بوت «/فك-الانتظار» أو من النتائج.'),
+    h('label', { class: 'f' }, 'حد مغادرة صفحة الاختبار'), leave, h('div', { class: 'hint' }, 'كل خروج من صفحة الاختبار (تبديل تبويب أو نافذة) يُسجَّل ويظهر للإدارة مع المتقدم. اكتب رقم (مثلاً 3) لإنهاء اختباره تلقائياً بعد تجاوزه، أو 0 للتسجيل والتحذير فقط بدون إنهاء.'),
+    h('label', { class: 'f' }, 'روم تنبيهات الصحة'), alertChan, h('div', { class: 'hint' }, 'ينبّهك لو البوت وقف أو النسخ الاحتياطي فشل أو الموقع أعيد تشغيله. بدون روم ← يوصلك على الخاص.'),
     h('label', { class: 'f' }, 'روم النتائج'), chan, h('div', { class: 'hint' }, 'الروم اللي يرسل فيه البوت نتيجة كل متقدم، وتحتها زر «إرسال إشعار للعضو». لازم البوت يشوفه وعنده View Channel + Send Messages + Embed Links.'),
     h('label', { class: 'f' }, 'رسالة الإشعار — للناجح'), pm,
     h('label', { class: 'f' }, 'رسالة الإشعار — للراسب'), fm, vars,
     h('div', { class: 'hint' }, 'الرسالة ما تنرسل تلقائياً؛ تنرسل في خاص العضو لما تضغط الزر في روم النتائج.'),
     h('div', { style: 'margin-top:18px' }, h('button', { class: 'btn', onclick: async () => {
-      try { await api('config', 'PUT', { questionsPerAttempt: +qpa.value, passPercent: +pass.value, retryMinutes: +retry.value, passRetryMode: prm.value, passRetryMinutes: +prmin.value || 0, resultsChannelId: chan.value.trim(), passMessage: pm.value, failMessage: fm.value }); toast('✅ تم حفظ الإعدادات'); }
+      try { await api('config', 'PUT', { questionsPerAttempt: +qpa.value, leaveLimit: +leave.value || 0, alertChannelId: alertChan.value.trim(), passPercent: +pass.value, retryMinutes: +retry.value, passRetryMode: prm.value, passRetryMinutes: +prmin.value || 0, resultsChannelId: chan.value.trim(), passMessage: pm.value, failMessage: fm.value }); toast('✅ تم حفظ الإعدادات'); }
       catch (e) { toast(e.message, true); }
     } }, 'حفظ الإعدادات'))));
 }
@@ -298,6 +306,9 @@ const SF = { q: '', status: '', result: '', from: '', to: '' };
 const STATUS_LABELS = { pending: '⏳ قيد المراجعة', interview: '🎤 مقابلة', accepted: '✅ مقبول', rejected: '⛔ مرفوض نهائياً' };
 const statusOf = (s) => s.passed ? (s.status || 'pending') : '';
 async function loadSubs() { S = await api('submissions'); renderSubs(); }
+const flagsText = (f) => [f.leaves ? `خرج من الصفحة ${f.leaves} مرة (${Math.round((f.awayMs || 0) / 1000)} ثانية)` : '', f.copies ? `نسخ ${f.copies}` : '', f.pastes ? `لصق ${f.pastes}` : '',
+  f.menus ? `كليك يمين ${f.menus}` : '', f.resumes ? `حدّث/رجع للصفحة ${f.resumes}` : ''].filter(Boolean).join(' · ') || '—';
+const flagsSuspicious = (f) => (f.leaves || 0) >= 3 || (f.pastes || 0) > 0 || (f.copies || 0) > 0 || (f.awayMs || 0) > 60000;
 function filteredSubs() {
   const from = SF.from ? new Date(SF.from + 'T00:00:00').getTime() : 0;
   const to = SF.to ? new Date(SF.to + 'T23:59:59.999').getTime() : Infinity;
@@ -309,9 +320,9 @@ function filteredSubs() {
 }
 function exportCsv(list) {
   const esc = (v) => { v = String(v ?? ''); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
-  const head = ['الاسم', 'أيدي الديسكورد', 'اسم الديسكورد', 'العمر', 'الإجابات الصحيحة', 'عدد الأسئلة', 'النسبة %', 'النتيجة', 'حالة الطلب', 'ملاحظة الإدارة', 'آخر تعديل بواسطة', 'التاريخ'];
+  const head = ['الاسم', 'أيدي الديسكورد', 'اسم الديسكورد', 'العمر', 'الإجابات الصحيحة', 'عدد الأسئلة', 'النسبة %', 'النتيجة', 'حالة الطلب', 'ملاحظة الإدارة', 'آخر تعديل بواسطة', 'مخالفات الاختبار', 'التاريخ'];
   const rows = list.map(s => [s.name, s.discordId, s.username, s.age, s.correctCount, s.total, s.percent, s.passed ? 'ناجح' : 'راسب',
-    s.passed ? STATUS_LABELS[s.status || 'pending'].replace(/^\S+\s/, '') : '', s.note || '', s.statusBy || '', new Date(s.at).toLocaleString('en-GB')]);
+    s.passed ? STATUS_LABELS[s.status || 'pending'].replace(/^\S+\s/, '') : '', s.note || '', s.statusBy || '', s.flags ? flagsText(s.flags) : '', new Date(s.at).toLocaleString('en-GB')]);
   const csv = '\ufeff' + [head, ...rows].map(r => r.map(esc).join(',')).join('\r\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   const el = h('a', { href: url, download: 'hp1-results-' + new Date().toISOString().slice(0, 10) + '.csv' });
@@ -374,7 +385,8 @@ function renderSubList() {
     box.append(h('div', { class: 'card' },
       h('div', { class: 'sub-top' },
         h('div', {}, h('b', {}, s.name), ` — ${s.age} سنة `, h('span', { class: 'badge ' + (s.passed ? 'ok' : 'bad') }, `${s.correctCount}/${s.total} (${s.percent}%) ${s.passed ? 'ناجح' : 'راسب'}`),
-          h('div', { class: 'meta' }, `${s.discordId} · ${fmtDate(s.at)}`)),
+          h('div', { class: 'meta' }, `${s.discordId} · ${fmtDate(s.at)}`),
+          s.flags ? h('div', { class: 'badge ' + (flagsSuspicious(s.flags) ? 'bad' : ''), style: 'margin-top:6px;white-space:normal' }, '🚩 ' + flagsText(s.flags)) : null),
         h('div', { class: 'qtools' },
           h('button', { class: 'btn sec sm', onclick: () => det.hidden = !det.hidden }, 'التفاصيل'),
           h('button', { class: 'btn sec sm', onclick: async () => {
@@ -429,6 +441,24 @@ async function loadOwner() {
   box.append(card);
   await renderDiscordCard(box);
   await renderBackupCard(box);
+  await renderAuditCard(box);
+}
+async function renderAuditCard(box) {
+  let L; try { L = await api('owner/audit'); } catch (e) { return; }
+  const list = h('div', { style: 'max-height:420px;overflow:auto;margin-top:12px;display:grid;gap:6px' });
+  const paint = (q) => {
+    list.replaceChildren();
+    const rows = L.filter(x => !q || (x.name + ' ' + x.by + ' ' + x.action + ' ' + x.detail).includes(q));
+    if (!rows.length) return list.append(h('div', { class: 'empty' }, 'لا توجد عمليات.'));
+    rows.forEach(x => list.append(h('div', { class: 'row', style: 'margin:0;display:block;padding:8px 10px;border:1px solid var(--line);border-radius:10px' },
+      h('div', {}, h('b', {}, x.action), x.detail ? h('span', { class: 'meta', style: 'margin:0 8px' }, x.detail) : null),
+      h('div', { class: 'meta', style: 'margin:2px 0 0' }, `${x.name || '—'}${x.by ? ' · ' + x.by : ''} · ${fmtDate(x.at)}`))));
+  };
+  box.append(h('div', { class: 'card', style: 'margin-top:16px' },
+    h('div', { class: 'qhead' }, h('span', {}, '📜 سجل الإدارة')),
+    h('div', { class: 'hint' }, 'آخر 300 عملية: مين عدّل الأسئلة أو الإعدادات، غيّر حالة متقدم، حذف نتيجة، فك انتظار... (يحتفظ بآخر 1000).'),
+    h('input', { type: 'search', placeholder: '🔍 ابحث بالاسم أو العملية...', oninput: (e) => paint(e.target.value) }), list));
+  paint('');
 }
 async function renderBackupCard(box) {
   let b; try { b = await api('owner/backup'); } catch (e) { return; }

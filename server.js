@@ -74,6 +74,7 @@ const FILES = {
   site: path.join(DATA_DIR, 'site.json'),
   perms: path.join(DATA_DIR, 'perms.json'),
   discord: DISCORD_FILE,
+  audit: path.join(DATA_DIR, 'audit.json'),
 };
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -91,7 +92,7 @@ const getQuestions = () => readJSON(FILES.questions, []);
 /* نصوص الإشعار الافتراضية — المتغيرات: {name} {mention} {percent} {correct} {total} {pass_percent} {minutes} */
 const DEFAULT_PASS_MSG = '🎉 مبروك! اجتزت اختبار **HP1 Police Mod** بنسبة **{percent}%**.\nسيتم مراجعة طلبك من الإدارة والتواصل معك قريباً.';
 const DEFAULT_FAIL_MSG = '❌ للأسف لم تجتز اختبار **HP1 Police Mod** (نسبتك {percent}%).\nيمكنك إعادة الاختبار بعد {minutes} دقيقة.';
-const getConfig = () => ({ passPercent: 60, retryMinutes: 60, questionsPerAttempt: 15, passRetryMode: 'allow', passRetryMinutes: 0, resultsChannelId: '', passMessage: DEFAULT_PASS_MSG, failMessage: DEFAULT_FAIL_MSG, ...readJSON(FILES.config, {}) });
+const getConfig = () => ({ passPercent: 60, retryMinutes: 60, questionsPerAttempt: 15, leaveLimit: 0, alertChannelId: '', passRetryMode: 'allow', passRetryMinutes: 0, resultsChannelId: '', passMessage: DEFAULT_PASS_MSG, failMessage: DEFAULT_FAIL_MSG, ...readJSON(FILES.config, {}) });
 /* روم النتائج: من الإعدادات في اللوحة، وإن ما انضبط يُستخدم DISCORD_RESULTS_CHANNEL_ID من .env */
 const getResultsChannel = () => { const c = getConfig().resultsChannelId; return /^\d{17,20}$/.test(c || '') ? c : RESULTS_CHANNEL; };
 const getSubmissions = () => readJSON(FILES.submissions, []);
@@ -106,6 +107,26 @@ const getAdminRoleIds = () => {
 };
 
 /* ---- خانات اللوحة + صلاحية كل خانة (يحددها المالك) ---- */
+const flagsText = (f) => [f.leaves ? `خرج من الصفحة ${f.leaves} مرة (${Math.round((f.awayMs || 0) / 1000)} ثانية)` : '', f.copies ? `نسخ ${f.copies}` : '', f.pastes ? `لصق ${f.pastes}` : '',
+  f.menus ? `كليك يمين ${f.menus}` : '', f.resumes ? `حدّث/رجع للصفحة ${f.resumes}` : ''].filter(Boolean).join(' · ') || '—';
+/* ---- سجل الإدارة: مين سوّى إيش ومتى (آخر 1000 عملية) ---- */
+const AUDIT_MAX = 1000;
+function auditLog(actor, action, detail = '') {
+  try {
+    const l = readJSON(FILES.audit, []);
+    l.push({ at: Date.now(), by: String(actor.u || actor.id || ''), name: String(actor.name || ''), action, detail: String(detail).slice(0, 300) });
+    writeJSON(FILES.audit, l.slice(-AUDIT_MAX));
+  } catch (e) { console.error('audit', e.message); }
+}
+function genericAudit(p, m) {
+  if (m === 'GET') return null;
+  const map = {
+    '/admin/api/questions': 'تعديل الأسئلة', '/admin/api/config': 'تعديل إعدادات الاختبار', '/admin/api/site/rules': 'تعديل القوانين',
+    '/admin/api/site/contacts': 'تعديل «تواصل معنا»', '/admin/api/site/staff': 'تعديل الطاقم الإداري', '/admin/api/site/quiz': 'تعديل مقدمة الاختبار',
+    '/admin/api/design': 'تعديل تصميم الموقع', '/admin/api/owner/backup': 'نسخ احتياطي يدوي',
+  };
+  return map[p] ? { action: map[p] } : null;
+}
 const SUB_STATUSES = ['pending', 'interview', 'accepted', 'rejected'];
 const TABS = ['questions', 'settings', 'subs', 'site', 'design'];
 // perms.json: { [tab]: [roleIds] }  — الخانة بدون قيد = كل من يدخل اللوحة
@@ -435,6 +456,27 @@ async function sendNotice(sub) {
   return !!(await discordApi('POST', `/channels/${dm.id}/messages`, { embeds, allowed_mentions: { parse: [] } }));
 }
 const notifying = new Set();
+/* تنبيهات الصحة: روم التنبيهات (من اللوحة) ← أو DISCORD_ALERT_CHANNEL_ID ← أو رسالة خاصة للمالك. تُرسل عبر REST فتشتغل حتى لو البوت واقف */
+async function sendAlert(text) {
+  const cfg = getConfig();
+  let ch = ID_RE.test(cfg.alertChannelId || '') ? cfg.alertChannelId : (process.env.DISCORD_ALERT_CHANNEL_ID || '');
+  if (!ch) { const dm = await discordApi('POST', '/users/@me/channels', { recipient_id: OWNER_ID }); ch = dm && dm.id; }
+  if (ch) await discordApi('POST', `/channels/${ch}/messages`, { content: text, allowed_mentions: { parse: [] } });
+}
+const BOOT_AT = Date.now(), BOT_STALE_MS = 3 * 60_000;
+let botSeen = 0, botAlerted = false, backupFails = 0;
+const botIsUp = () => !!botSeen && Date.now() - botSeen < BOT_STALE_MS;
+setInterval(() => {
+  if (botIsUp() && botAlerted) { botAlerted = false; sendAlert('✅ البوت رجع يشتغل.'); }
+  if (!botIsUp() && !botAlerted && Date.now() - BOOT_AT > 5 * 60_000) {
+    botAlerted = true;
+    sendAlert(botSeen ? `⚠️ البوت ما عاد يرد (آخر إشارة قبل ${Math.round((Date.now() - botSeen) / 60000)} دقيقة). تأكد من الاستضافة واللوقز.` : '⚠️ البوت ما اشتغل بعد تشغيل الموقع. تأكد من التوكن واللوقز في الاستضافة.');
+  }
+  if (BACKUP_ON) {
+    if (backup.state.ok === false) { if (++backupFails === 3) sendAlert('⚠️ فشل النسخ الاحتياطي 3 مرات متتالية: ' + backup.state.error); }
+    else backupFails = 0;
+  }
+}, 60_000).unref();
 
 /* responses */
 const SEC_HEADERS = {
@@ -535,6 +577,7 @@ async function postToDiscord(sub, avatar) {
       { name: '🎯 نسبة النجاح المطلوبة', value: getConfig().passPercent + '%', inline: true },
       { name: '⏱️ الوقت المستغرق', value: `${Math.floor(sub.elapsedMs / 60000)}د ${String(Math.floor((sub.elapsedMs % 60000) / 1000)).padStart(2, '0')}ث من ${Math.round(sub.durationMs / 60000)}د` + (sub.timedOut ? ' — ⚠️ انتهى الوقت' : ''), inline: true },
       { name: '📌 الحالة', value: sub.passed ? '🟢 اجتاز الاختبار' : '🔴 لم يجتز الاختبار', inline: true },
+      ...(sub.flags ? [{ name: '🚩 مخالفات أثناء الاختبار', value: flagsText(sub.flags).slice(0, 1000), inline: false }] : []),
     ],
     footer: { text: 'HP1 Police Mod | نظام الإدارة' }, timestamp: new Date(sub.at).toISOString(),
   };
@@ -598,14 +641,37 @@ async function handleStart(req, res) {
   if (!s || now > s.startedAt + s.durationMs + STALE_MS) {
     const qids = drawQuestionIds();
     if (!qids.length) return json(res, 503, { error: 'لا توجد أسئلة.' });
-    s = { startedAt: now, durationMs: quizDurationMs(), answers: {}, qids };
+    s = { startedAt: now, durationMs: quizDurationMs(), answers: {}, qids, flags: {} };
     quizSessions.set(user.id, s); saveSessions();
+  } else {
+    // رجع لنفس الجلسة (تحديث الصفحة/إغلاقها) ← نسجّلها
+    s.flags = s.flags || {}; s.flags.resumes = (s.flags.resumes || 0) + 1; saveSessions();
   }
   return json(res, 200, {
     remainingMs: Math.max(0, s.startedAt + s.durationMs - now), durationMs: s.durationMs,
     questions: publicQuestions(s.qids || getQuestions().map((q) => q.id)), // نفس الأسئلة المسحوبة لو حدّث الصفحة
     answers: s.answers, // لو حدّث الصفحة يرجع لإجاباته
+    flags: s.flags || {}, leaveLimit: getConfig().leaveLimit,
   }, { 'Cache-Control': 'no-store' });
+}
+
+/* سجل مخالفات الاختبار: خروج من الصفحة، نسخ، لصق، كليك يمين */
+async function handleFlag(req, res) {
+  const user = readUser(req);
+  if (!user) return json(res, 401, { error: 'سجّل الدخول أولاً.' });
+  if (!hit('flag:' + user.id, 400, 3600_000).ok) return json(res, 429, { error: 'كثير.' });
+  const s = quizSessions.get(user.id);
+  if (!s) return json(res, 200, { ok: false });
+  const b = await readBody(req, 1024);
+  const f = s.flags = s.flags || {};
+  const bump = (k, n = 1) => { f[k] = (f[k] || 0) + n; };
+  if (b.type === 'leave') { bump('leaves'); bump('awayMs', Math.min(Math.max(0, Number(b.awayMs) || 0), 6 * 3600_000)); }
+  else if (b.type === 'copy') bump('copies');
+  else if (b.type === 'paste') bump('pastes');
+  else if (b.type === 'menu') bump('menus');
+  else return json(res, 400, { error: 'نوع غير معروف.' });
+  saveSessions();
+  return json(res, 200, { ok: true, flags: f });
 }
 
 async function handleProgress(req, res) {
@@ -669,7 +735,8 @@ async function handleSubmit(req, res) {
   const passed = percent >= getConfig().passPercent;
 
   const sub = { id: crypto.randomUUID(), at: Date.now(), name, discordId, username: user.name, age, correctCount, total, percent, passed, details,
-    elapsedMs, durationMs: sess.durationMs, timedOut: elapsedMs > sess.durationMs };
+    elapsedMs, durationMs: sess.durationMs, timedOut: elapsedMs > sess.durationMs,
+    ...(sess.flags && Object.values(sess.flags).some(Boolean) ? { flags: sess.flags } : {}) };
   const all = getSubmissions(); all.push(sub);
   writeJSON(FILES.submissions, all.slice(-5000));
   postToDiscord(sub, user.avatar); // لا ننتظرهما
@@ -711,6 +778,14 @@ async function handleAdminApi(req, res, pathname, url) {
     if (origin && new URL(origin).host !== req.headers.host) return json(res, 403, { error: 'طلب مرفوض.' });
   }
 
+  if (req.method !== 'GET' && pathname !== '/admin/api/logout') {
+    res.on('finish', () => {
+      if (res.statusCode >= 300) return;
+      const a = req._audit || genericAudit(pathname, req.method);
+      if (a) auditLog(session, a.action, a.detail || '');
+    });
+  }
+
   if (pathname === '/admin/api/me' && req.method === 'GET') {
     return json(res, 200, { id: session.u, name: session.name, isOwner: session.isOwner, tabs: await tabAccess(session.u) });
   }
@@ -743,7 +818,11 @@ async function handleAdminApi(req, res, pathname, url) {
       }
       writeJSON(FILES.owner, { adminRoleIds: ids, version: getOwnerCfg().version + 1 });
       console.log('Admin roles changed by owner:', ids.length, 'roles');
+      req._audit = { action: 'تغيير رولات دخول اللوحة', detail: ids.length + ' رول' };
       return json(res, 200, { ok: true, selected: ids });
+    }
+    if (pathname === '/admin/api/owner/audit' && req.method === 'GET') {
+      return json(res, 200, readJSON(FILES.audit, []).slice(-300).reverse());
     }
     /* النسخ الاحتياطي */
     if (pathname === '/admin/api/owner/backup' && req.method === 'GET') return json(res, 200, { enabled: BACKUP_ON, ...backup.state });
@@ -760,6 +839,7 @@ async function handleAdminApi(req, res, pathname, url) {
     if (pathname === '/admin/api/owner/discord' && req.method === 'PUT') {
       const b = await readBody(req, 8192);
       saveDiscordSettings(b);
+      req._audit = { action: 'تعديل إعدادات ديسكورد', detail: [b.clientSecret ? 'Client Secret' : '', 'guildId' in b ? 'السيرفر' : '', 'passRoleId' in b ? 'رول الناجح' : '', b.redirectUri ? 'رابط الرجوع' : ''].filter(Boolean).join('، ') };
       return json(res, 200, { ok: true });
     }
     /* صلاحيات الخانات: لكل خانة قائمة رولات (null = كل أصحاب اللوحة) */
@@ -776,6 +856,7 @@ async function handleAdminApi(req, res, pathname, url) {
       }
       const all = getPerms(); all[pm[1]] = ids;
       writeJSON(FILES.perms, all);
+      req._audit = { action: 'تغيير صلاحيات خانة', detail: pm[1] + (ids === null ? ' ← الكل' : ' ← ' + ids.length + ' رول') };
       return json(res, 200, { ok: true, perms: all });
     }
     return json(res, 404, { error: 'غير موجود.' });
@@ -863,6 +944,10 @@ async function handleAdminApi(req, res, pathname, url) {
       const passRetryMode = b.passRetryMode === 'never' ? 'never' : 'allow';
       const passRetryMinutes = Number(b.passRetryMinutes || 0);
       if (!Number.isInteger(passRetryMinutes) || passRetryMinutes < 0 || passRetryMinutes > 525600) return json(res, 400, { error: 'مدة إعادة الناجح من 0 إلى 525600 دقيقة.' });
+      const leaveLimit = Number(b.leaveLimit || 0);
+      if (!Number.isInteger(leaveLimit) || leaveLimit < 0 || leaveLimit > 50) return json(res, 400, { error: 'حد مغادرة الصفحة من 0 إلى 50.' });
+      const alertChannelId = String(b.alertChannelId || '').trim();
+      if (alertChannelId && !/^\d{17,20}$/.test(alertChannelId)) return json(res, 400, { error: 'أيدي روم التنبيهات غير صالح.' });
       const resultsChannelId = String(b.resultsChannelId || '').trim();
       if (resultsChannelId) {
         if (!/^\d{17,20}$/.test(resultsChannelId)) return json(res, 400, { error: 'أيدي الروم غير صالح.' });
@@ -872,7 +957,7 @@ async function handleAdminApi(req, res, pathname, url) {
       const passMessage = String(b.passMessage || '').trim() || DEFAULT_PASS_MSG;
       const failMessage = String(b.failMessage || '').trim() || DEFAULT_FAIL_MSG;
       if (passMessage.length > 1500 || failMessage.length > 1500) return json(res, 400, { error: 'الرسالة أطول من 1500 حرف.' });
-      writeJSON(FILES.config, { passPercent, retryMinutes, questionsPerAttempt, passRetryMode, passRetryMinutes, resultsChannelId, passMessage, failMessage });
+      writeJSON(FILES.config, { leaveLimit, alertChannelId, passPercent, retryMinutes, questionsPerAttempt, passRetryMode, passRetryMinutes, resultsChannelId, passMessage, failMessage });
       return json(res, 200, { ...getConfig(), bankSize: getQuestions().length });
     }
   }
@@ -896,11 +981,15 @@ async function handleAdminApi(req, res, pathname, url) {
     }
     next.statusBy = session.name; next.statusAt = Date.now();
     all[i] = next; writeJSON(FILES.submissions, all);
+    const SL = { pending: 'قيد المراجعة', interview: 'مقابلة', accepted: 'مقبول', rejected: 'مرفوض نهائياً' };
+    req._audit = { action: 'تغيير حالة متقدم', detail: `${next.name} (${next.discordId}) ← ${'status' in b ? SL[next.status] : 'ملاحظة'}` };
     return json(res, 200, { ok: true, status: next.status || 'pending', note: next.note || '', statusBy: next.statusBy, statusAt: next.statusAt });
   }
   const del = /^\/admin\/api\/submissions\/([\w-]{1,64})$/.exec(pathname);
   if (del && req.method === 'DELETE') {
     const all = getSubmissions();
+    const gone = all.find((s) => s.id === del[1]);
+    if (gone) req._audit = { action: 'حذف نتيجة', detail: `${gone.name} (${gone.discordId}) — ${gone.percent}%` };
     writeJSON(FILES.submissions, all.filter((s) => s.id !== del[1]));
     return json(res, 200, { ok: true });
   }
@@ -909,6 +998,7 @@ async function handleAdminApi(req, res, pathname, url) {
     const id = String(b.discordId || '');
     if (!/^\d{17,20}$/.test(id)) return json(res, 400, { error: 'أيدي غير صالح.' });
     const cleared = clearCooldown(id);
+    req._audit = { action: 'فك انتظار/قفل', detail: id };
     return json(res, 200, { ok: true, cleared });
   }
   return json(res, 404, { error: 'غير موجود.' });
@@ -920,7 +1010,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const pathname = url.pathname;
     if (pathname === '/healthz' && (req.method === 'GET' || req.method === 'HEAD')) {
-      return json(res, 200, { ok: true, service: 'hp1-quiz', time: Date.now() });
+      return json(res, 200, { ok: true, service: 'hp1-quiz', time: Date.now(), bot: botIsUp() ? 'up' : 'down', backup: BACKUP_ON ? (backup.state.ok === false ? 'failing' : 'ok') : 'off' });
     }
 
     /* ---- لوحة التحكم ---- */
@@ -1033,13 +1123,17 @@ const server = http.createServer(async (req, res) => {
           if (!(await sendNotice(sub))) return json(res, 502, { error: 'dm_failed' });
           const all = getSubmissions(); const i = all.findIndex((x) => x.id === sid); // نعيد القراءة (ممكن تكون تغيّرت أثناء الإرسال)
           if (i >= 0) { all[i] = { ...all[i], notifiedAt: Date.now(), notifiedBy: uid }; writeJSON(FILES.submissions, all); }
+          auditLog({ u: uid, name: 'عبر البوت' }, 'إرسال التقرير للمتقدم', `${sub.name} (${sub.discordId})`);
           return json(res, 200, { ok: true, passed: sub.passed });
         } finally { notifying.delete(sid); }
       }
+      if (pathname === '/internal/heartbeat' && req.method === 'POST') { botSeen = Date.now(); return json(res, 200, { ok: true }); }
       if (pathname === '/internal/reset' && req.method === 'POST') {
         const b = await readBody(req, 4096); const id = String(b.discordId || '');
         if (!/^\d{17,20}$/.test(id)) return json(res, 400, { error: 'أيدي غير صالح.' });
-        return json(res, 200, { ok: true, cleared: clearCooldown(id) });
+        const cleared = clearCooldown(id);
+        auditLog({ u: b.by, name: 'عبر البوت' }, 'فك انتظار/قفل', id);
+        return json(res, 200, { ok: true, cleared });
       }
       return json(res, 404, { error: 'غير موجود.' });
     }
@@ -1072,6 +1166,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/start' && req.method === 'POST') return await handleStart(req, res);
     if (pathname === '/api/progress' && req.method === 'POST') return await handleProgress(req, res);
+    if (pathname === '/api/flag' && req.method === 'POST') return await handleFlag(req, res);
     if (pathname === '/api/submit' && req.method === 'POST') return await handleSubmit(req, res);
     if (pathname.startsWith('/api/')) return json(res, 404, { error: 'غير موجود.' });
 
@@ -1100,6 +1195,7 @@ const server = http.createServer(async (req, res) => {
   server.listen(PORT, HOST, () => {
     console.log(`✅ HP1 server يعمل على http://${HOST}:${PORT}   (لوحة التحكم: /admin)`);
     ensureGuild();
+    if (ON_HOST) setTimeout(() => sendAlert('🟢 الموقع اشتغل (تشغيل جديد).'), 20_000);
     if (BACKUP_ON) { backup.schedule(30_000); console.log('🗄️  النسخ الاحتياطي التلقائي مفعّل (روم #hp1-data).'); }
     if (!loginEnabled()) console.log('⚠️  تسجيل الدخول غير مفعّل بعد — افتح /setup في موقعك وعبّئ الـ Client Secret.');
     if (!getResultsChannel()) console.log('ℹ️  روم النتائج غير محدد — حدده من اللوحة ← الإعدادات (أو DISCORD_RESULTS_CHANNEL_ID). النتائج تُحفظ في اللوحة فقط حالياً.');

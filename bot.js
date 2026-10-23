@@ -91,6 +91,9 @@ client.once('clientReady', async () => {
   console.log(`✅ البوت شغّال: ${client.user.tag} — تم تسجيل الأوامر في ${guild.name}`);
   monitorSite();
   setInterval(monitorSite, 30_000);
+  // إشارة حياة للموقع كل دقيقة (الموقع ينبّهك لو توقفت)
+  const beat = () => site('POST', '/internal/heartbeat', {}).catch(() => {});
+  beat(); setInterval(beat, 60_000);
 });
 
 /* زر «إرسال التقرير للعضو» تحت نتيجة المتقدم في روم النتائج */
@@ -144,7 +147,7 @@ client.on('interactionCreate', async (i) => {
       await i.deferReply({ flags: MessageFlags.Ephemeral });
       if (!i.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return i.editReply('⛔ هذا الأمر للإدارة فقط.');
       const u = i.options.getUser('العضو', true);
-      const r = await site('POST', '/internal/reset', { discordId: u.id });
+      const r = await site('POST', '/internal/reset', { discordId: u.id, by: i.user.id });
       return i.editReply(r.cleared ? `✅ تم فك الانتظار عن <@${u.id}> (${r.cleared}).` : `ℹ️ <@${u.id}> ما عليه مدة انتظار.`);
     }
   } catch (e) {
