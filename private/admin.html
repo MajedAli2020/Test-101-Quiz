@@ -229,7 +229,10 @@ function renderQ() {
   const box = $('#questions'); box.replaceChildren();
   box.append(h('div', { class: 'row', style: 'justify-content:space-between;margin:0 0 14px' },
     h('div', { class: 'hint' }, `عدد الأسئلة: ${Q.length} — اختر الدائرة بجانب الإجابة الصحيحة.`),
-    h('button', { class: 'btn', onclick: () => { Q.push({ question: '', options: ['', '', ''], correct: 0 }); renderQ(); markDirty(); window.scrollTo(0, document.body.scrollHeight); } }, '＋ سؤال جديد')));
+    h('div', { class: 'row' },
+      h('button', { class: 'btn sec', onclick: exportQ }, '⬇️ تصدير'),
+      h('button', { class: 'btn sec', onclick: importQ }, '⬆️ استيراد'),
+      h('button', { class: 'btn', onclick: () => { Q.push({ question: '', options: ['', '', ''], correct: 0 }); renderQ(); markDirty(); window.scrollTo(0, document.body.scrollHeight); } }, '＋ سؤال جديد'))));
   Q.forEach((q, i) => {
     const card = h('div', { class: 'card' });
     card.append(h('div', { class: 'qhead' }, h('span', {}, `سؤال ${i + 1}`),
@@ -249,6 +252,25 @@ function renderQ() {
     if (q.options.length < 8) card.append(h('div', { class: 'row' }, h('button', { class: 'btn sec sm', onclick: () => { q.options.push(''); renderQ(); markDirty(); } }, '＋ خيار')));
     box.append(card);
   });
+}
+/* تصدير/استيراد بنك الأسئلة (الاستيراد يحمّل الأسئلة للمحرر فقط — ما تنحفظ إلا لما تضغط حفظ، وإحصائيات المختبرين ما تتأثر) */
+function exportQ() {
+  const blob = new Blob([JSON.stringify(Q, null, 2)], { type: 'application/json' });
+  const a = h('a', { href: URL.createObjectURL(blob), download: 'questions-' + new Date().toISOString().slice(0, 10) + '.json' });
+  document.body.append(a); a.click(); a.remove();
+}
+function importQ() {
+  const inp = h('input', { type: 'file', accept: 'application/json,.json' });
+  inp.onchange = async () => {
+    try {
+      const data = JSON.parse(await inp.files[0].text());
+      if (!Array.isArray(data) || !data.length) throw new Error('الملف لازم يكون قائمة أسئلة.');
+      if (!confirm(`استبدال الأسئلة الحالية بـ ${data.length} سؤال من الملف؟\nما راح يتغيّر شيء إلا لما تضغط «حفظ». (نزّل نسخة بزر «تصدير» قبل لو تبي.)`)) return;
+      Q = data.map((x) => ({ id: x.id, question: String(x.question || ''), options: (x.options || []).map(String), correct: Number(x.correct) || 0 }));
+      renderQ(); markDirty(); toast('تم تحميل الأسئلة — راجعها ثم اضغط حفظ');
+    } catch (e) { toast('ملف غير صالح: ' + e.message, true); }
+  };
+  inp.click();
 }
 async function loadQ() { Q = await api('questions'); saved = JSON.stringify(Q); renderQ(); markDirty(); }
 SAVERS.questions = {

@@ -728,7 +728,7 @@ async function handleSubmit(req, res) {
     const valid = a !== null && q.options.includes(a);
     const ok = valid && a === q.options[q.correct];
     if (ok) correctCount++;
-    return { question: q.question, chosen: valid ? a : null, correct: q.options[q.correct], ok };
+    return { qid: q.id, question: q.question, chosen: valid ? a : null, correct: q.options[q.correct], ok };
   });
   const total = questions.length;
   const percent = Math.round((correctCount / total) * 100);

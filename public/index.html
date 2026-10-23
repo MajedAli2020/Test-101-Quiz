@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <script src="i18n.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preload" as="image" href="logo.webp" type="image/webp">
+<link rel="preload" as="image" href="background.webp" type="image/webp">
 <title>HP1 Police Mod | مود الشرطة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,7 +32,7 @@
   --glow:0 0 40px rgba(var(--gold-rgb),.18);
   --radius:22px;
   --head-h:92px;
-  --bg-img:url("background.png");
+  --bg-img:url("background.webp");
   --bg-op:.28;
 }
 
@@ -81,9 +83,13 @@ body{
 body.intro-active{overflow:hidden}
 #hp1Intro{position:fixed;inset:0;z-index:5000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;overflow:hidden;background:#080602;opacity:1;visibility:visible;transition:opacity .75s ease,visibility .75s ease}
 #hp1Intro:before,#hp1Intro:after{content:"";position:absolute;border-radius:50%;pointer-events:none}
-#hp1Intro:before{width:min(85vw,760px);height:min(85vw,760px);background:radial-gradient(circle,rgba(var(--gold-rgb),.18),transparent 62%);filter:blur(20px);animation:introBreath 2.2s ease-in-out infinite}
+#hp1Intro:before{width:min(85vw,760px);height:min(85vw,760px);background:radial-gradient(circle,rgba(var(--gold-rgb),.18),transparent 62%);will-change:transform,opacity;animation:introBreath 2.2s ease-in-out infinite}
 #hp1Intro:after{inset:0;background:linear-gradient(115deg,transparent 35%,rgba(247,230,187,.07) 50%,transparent 65%);transform:translateX(-120%);animation:introSweep 2.1s ease-in-out .2s infinite}
 #hp1Intro.hide{opacity:0;visibility:hidden;pointer-events:none}
+/* الأنميشن ما يبدأ إلا لما يجهز الشعار (class go) — وإذا انقطع الجافاسكربت يختفي الغلاف لوحده بعد 9 ثواني */
+#hp1Intro:not(.go):before,#hp1Intro:not(.go):after,#hp1Intro:not(.go) *,#hp1Intro:not(.go) *:before,#hp1Intro:not(.go) *:after{animation-play-state:paused!important}
+#hp1Intro{animation:introFailsafe .6s ease 9s forwards}
+@keyframes introFailsafe{to{opacity:0;visibility:hidden;pointer-events:none}}
 .hp1-intro-orbit{position:relative;width:clamp(130px,25vw,190px);height:clamp(130px,25vw,190px);display:grid;place-items:center;z-index:1;animation:introLogoIn 1.15s cubic-bezier(.2,.8,.2,1) both}
 .hp1-intro-orbit:before,.hp1-intro-orbit:after{content:"";position:absolute;border-radius:50%;inset:-14px;border:1px solid rgba(var(--gold-rgb),.48);box-shadow:0 0 26px rgba(var(--gold-rgb),.22),inset 0 0 20px rgba(var(--gold-rgb),.12);animation:introOrbit 5s linear infinite}
 .hp1-intro-orbit:after{inset:-27px;border-color:rgba(247,230,187,.2);border-style:dashed;animation-duration:8s;animation-direction:reverse}
@@ -634,11 +640,45 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
 </head>
 <body class="intro-active">
 <div id="hp1Intro" role="status" aria-label="جاري تحميل HP1">
-  <div class="hp1-intro-orbit"><img src="logo.png" alt="HP1"></div>
+  <div class="hp1-intro-orbit"><img src="logo.webp" alt="HP1" decoding="async" fetchpriority="high"></div>
   <div class="hp1-intro-mark">HP1</div>
   <div class="hp1-intro-sub">POLICE MOD</div>
   <div class="hp1-intro-line"><span></span></div>
 </div>
+<script>
+/* شاشة HP1 الافتتاحية: تبدأ الأنميشن لما يجهز الشعار، وتقفل بعد مدة ثابتة + اكتمال التحميل (حد أقصى) */
+(function(){
+  var splash=document.getElementById("hp1Intro");
+  if(!splash)return;
+  var img=splash.querySelector("img"),t0=performance.now(),started=0,closed=false;
+  var MIN_SHOW=2200,MAX_WAIT_LOGO=1200,MAX_TOTAL=6500;
+  function finish(){
+    if(closed)return;closed=true;
+    document.body.classList.remove("intro-active");
+    splash.classList.add("hide");
+    window.__introDone=true;
+    try{window.dispatchEvent(new Event("hp1:intro-done"))}catch(e){}
+    setTimeout(function(){if(splash.parentNode)splash.remove()},850);
+  }
+  function tryClose(){
+    if(closed||!started)return;
+    var shown=performance.now()-started,loaded=document.readyState==="complete";
+    if(shown>=MIN_SHOW&&(loaded||performance.now()-t0>=MAX_TOTAL))finish();
+    else setTimeout(tryClose,100);
+  }
+  function go(){
+    if(started||closed)return;
+    started=performance.now();splash.classList.add("go");tryClose();
+  }
+  var ready=new Promise(function(r){
+    if(img&&img.decode){img.decode().then(r,r)}
+    else if(!img||img.complete)r();
+    else{img.addEventListener("load",r);img.addEventListener("error",r)}
+  });
+  Promise.race([ready,new Promise(function(r){setTimeout(r,MAX_WAIT_LOGO)})]).then(go);
+  setTimeout(function(){go();if(!closed&&performance.now()-t0>=MAX_TOTAL+MIN_SHOW)finish()},MAX_TOTAL);
+})();
+</script>
 
 <div class="bg-img"></div>
 <div class="bg-aurora"></div>
@@ -649,7 +689,7 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
 <!-- ===================== HEADER ===================== -->
 <header id="siteHeader">
   <div class="logo" onclick="showPage('home')">
-    <div class="logo-frame"><div class="inner"><img src="logo.png" alt="HP1" data-fb="H1"></div></div>
+    <div class="logo-frame"><div class="inner"><img src="logo.webp" alt="HP1" data-fb="H1"></div></div>
     <div class="logo-text">
       <strong>HP1</strong>
       <small>مــود الــشــرطــة</small>
@@ -703,7 +743,7 @@ try{window.applyDesign(JSON.parse(localStorage.getItem("siteDesign")||"null"))}c
       <div class="hero-logo-wrap">
         <div class="hero-ring"></div>
         <div class="hero-ring r2"></div>
-        <img src="logo.png" class="hero-logo" alt="HP1 Police Mod" data-fb="HP1">
+        <img src="logo.webp" class="hero-logo" alt="HP1 Police Mod" data-fb="HP1">
       </div>
 
       <h1>مرحباً بك في <span class="grad">HP1 Police Mod</span></h1>
@@ -1254,7 +1294,7 @@ async function openProfile(me){
   cell(L?L.percent+"%":"—","آخر نتيجة");
   cell(P&&P.bestPercent!=null?P.bestPercent+"%":"—","أعلى نتيجة");
   cell(P?P.attempts:0,"عدد المحاولات");
-  cell(L?new Date(L.at).toLocaleDateString(HP1_I18N.lang==="en"?"en-GB":"ar-SA"):"—","تاريخ آخر محاولة");
+  cell(L?new Date(L.at).toLocaleDateString(window.HP1_I18N&&HP1_I18N.lang==="en"?"en-GB":"ar-SA"):"—","تاريخ آخر محاولة");
   card.append(grid);
   if(L&&L.passed){
     const SL={pending:"⏳ قيد المراجعة",interview:"🎤 مقابلة",accepted:"✅ مقبول",rejected:"⛔ مرفوض نهائياً"};
@@ -1462,7 +1502,8 @@ const io=new IntersectionObserver(es=>{
   es.forEach(e=>{if(e.isIntersecting){e.target.classList.add("in");io.unobserve(e.target)}});
 },{threshold:.12});
 function runReveal(){document.querySelectorAll(".page.active .reveal:not(.in)").forEach(el=>io.observe(el))}
-runReveal();
+if(window.__introDone)runReveal();
+else{window.addEventListener("hp1:intro-done",runReveal,{once:true});setTimeout(runReveal,8000)}
 
 /* ---------- counters ---------- */
 const co=new IntersectionObserver(es=>{
@@ -1630,7 +1671,11 @@ function startRetryCountdown(){
 
 function toggleLang(){
   if(quizIsRunning){showCustomAlert("لا يمكنك تغيير اللغة أثناء الاختبار.","تغيير اللغة","🌐");return}
-  HP1_I18N.set(HP1_I18N.lang==="en"?"ar":"en");
+  var cur="ar";
+  try{cur=(window.HP1_I18N&&HP1_I18N.lang)||(localStorage.getItem("hp1Lang")==="en"?"en":"ar")}catch(e){}
+  var next=cur==="en"?"ar":"en";
+  if(window.HP1_I18N)HP1_I18N.set(next);
+  else{try{localStorage.setItem("hp1Lang",next)}catch(e){}location.reload()}
 }
 /* ===================== ANTI-CHEAT (تسجيل مخالفات الاختبار) ===================== */
 const AC={leaves:0,awayMs:0,copies:0,pastes:0,menus:0,resumes:0,hiddenAt:0,limit:0,bannerT:null};
@@ -1876,17 +1921,6 @@ async function finishQuiz(){
 
 loadQuiz();
 loadMe();
-/* شاشة HP1 الافتتاحية: تظهر عند كل دخول أو تحديث للصفحة */
-(function(){
-  const splash=document.getElementById("hp1Intro");
-  const close=()=>{
-    if(!splash)return;
-    document.body.classList.remove("intro-active");
-    splash.classList.add("hide");
-    setTimeout(()=>splash.remove(),850);
-  };
-  setTimeout(close,2600);
-})();
 </script>
 </body>
 </html>
