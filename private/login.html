@@ -19,7 +19,6 @@ p.sub{text-align:center;color:#a89f8b;font-size:14px;margin-bottom:24px}
 </head>
 <body>
 <div class="card">
-  <img src="/logo.png" alt="" style="display:block;margin:0 auto 12px;width:72px;height:72px;border-radius:50%;object-fit:cover">
   <h1>🔐 لوحة التحكم</h1>
   <p class="sub">Top Store — الدخول لأصحاب رول الإدارة فقط</p>
   <a class="dbtn" href="/auth/discord?next=admin">الدخول عبر ديسكورد</a>
@@ -30,6 +29,15 @@ if (new URLSearchParams(location.search).has('denied')) {
   document.getElementById('e').textContent = '⛔ حسابك لا يملك رول الإدارة، أو تعذر التحقق منه.';
   history.replaceState(null, '', '/admin');
 }
+/* نصوص الصفحة تتعدل من اللوحة ← الموقع ← نصوص الموقع */
+fetch('/api/site', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+  const map = d.texts || {}; if (!Object.keys(map).length) return;
+  const w = document.createTreeWalker(document.querySelector('.card'), NodeFilter.SHOW_TEXT); let n;
+  while ((n = w.nextNode())) {
+    const raw = n.nodeValue, k = raw.replace(/\s+/g, ' ').trim();
+    if (k && Object.prototype.hasOwnProperty.call(map, k)) { const m = /^(\s*)[\s\S]*?(\s*)$/.exec(raw); n.nodeValue = m[1] + map[k] + m[2]; }
+  }
+}).catch(() => {});
 </script>
 </body>
 </html>
